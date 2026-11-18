@@ -1,0 +1,20 @@
+# Three NATS servers with a single user; the password comes from the Secret
+# nats-inbuxa (key: password) through the environment.
+config:
+  cluster:
+    enabled: true
+    replicas: 3
+  merge:
+    authorization:
+      user: inbuxa
+      password: << $NATS_INBUXA_PASSWORD >>
+container:
+  env:
+    NATS_INBUXA_PASSWORD:
+      valueFrom:
+        secretKeyRef: {name: nats-inbuxa, key: password}
+podTemplate:
+  topologySpreadConstraints:
+    kubernetes.io/hostname:
+      maxSkew: 1
+      whenUnsatisfiable: DoNotSchedule

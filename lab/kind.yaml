@@ -1,0 +1,10 @@
+# One control plane and three workers, so pods can spread and a node can be
+# drained or removed. Ports aren't mapped to the host: mail reaches the cluster
+# through MetalLB addresses on the kind Docker network.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

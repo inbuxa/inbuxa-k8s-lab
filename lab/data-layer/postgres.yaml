@@ -1,0 +1,19 @@
+# Two instances so a primary failover can be tested. CloudNativePG creates the
+# Secret inbuxa-pg-app (username, password) and the Service inbuxa-pg-rw.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: inbuxa-pg
+  namespace: data
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  storage:
+    size: 2Gi
+  bootstrap:
+    initdb:
+      database: inbuxa
+      owner: inbuxa
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
