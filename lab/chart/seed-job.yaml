@@ -1,5 +1,5 @@
 # The seed run, as the chart will make it: `inbuxa --seed` sets up the new
-# store from seed.json (ConfigMap inbuxa-seed) and exits. Its secrets come
+# store from seed.json (ConfigMap inbuxa-lab-seed) and exits. Its secrets come
 # from Secret inbuxa-seed, mounted at /etc/inbuxa/seed-secrets, which only
 # this Job sees. The server's own secrets are where every node reads them.
 apiVersion: batch/v1
@@ -35,7 +35,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
       volumes:
         - {name: config, configMap: {name: inbuxa-config}}
-        - {name: seed, configMap: {name: inbuxa-seed}}
+        - {name: seed, configMap: {name: inbuxa-lab-seed}}
         - {name: seed-secrets, secret: {secretName: inbuxa-seed, defaultMode: 0440}}
         - name: data-secrets
           projected:

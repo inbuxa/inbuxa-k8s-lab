@@ -26,3 +26,14 @@ server:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "1", memory: 1Gi}
+  # The lab's setup (seed.json), from ConfigMap inbuxa-lab-seed and Secret inbuxa-seed,
+  # which seed-store.sh makes
+  seed:
+    enabled: true
+    existingConfigMap: inbuxa-lab-seed
+    secretMounts:
+      - secretName: inbuxa-seed
+        items:
+          - {key: admin-password, path: admin-password}
+          - {key: alice-password, path: alice-password}
+          - {key: s3-access-key, path: s3-access-key}

@@ -36,7 +36,7 @@ new_password > "$STATE/alice.password"
   --from-file=alice-password="$STATE/alice.password" \
   --from-file=s3-access-key="$STATE/s3-access-key" >/dev/null
 rm -f "$STATE/s3-access-key"
-"${K[@]}" -n inbuxa create configmap inbuxa-seed --from-file=seed.json --dry-run=client -o yaml \
+"${K[@]}" -n inbuxa create configmap inbuxa-lab-seed --from-file=seed.json --dry-run=client -o yaml \
   | "${K[@]}" apply -f - >/dev/null
 
 echo "== the seed run"
