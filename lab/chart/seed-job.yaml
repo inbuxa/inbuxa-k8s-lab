@@ -1,0 +1,47 @@
+# The seed run, as the chart will make it: `inbuxa --seed` sets up the new
+# store from seed.json (ConfigMap inbuxa-seed) and exits. Its secrets come
+# from Secret inbuxa-seed, mounted at /etc/inbuxa/seed-secrets, which only
+# this Job sees. The server's own secrets are where every node reads them.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inbuxa-seed
+  namespace: inbuxa
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {app: inbuxa-seed}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true, runAsUser: 2000, runAsGroup: 2000, fsGroup: 2000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: seed
+          image: IMAGE
+          imagePullPolicy: Never
+          args: [--seed, /etc/inbuxa/seed/seed.json, --config, /etc/inbuxa/config.json]
+          env:
+            - {name: INBUXA_HOSTNAME, value: seed}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/inbuxa/config.json, subPath: config.json}
+            - {name: seed, mountPath: /etc/inbuxa/seed}
+            - {name: seed-secrets, mountPath: /etc/inbuxa/seed-secrets}
+            - {name: data-secrets, mountPath: /etc/inbuxa/secrets}
+            - {name: var, mountPath: /var/lib/inbuxa}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: inbuxa-config}}
+        - {name: seed, configMap: {name: inbuxa-seed}}
+        - {name: seed-secrets, secret: {secretName: inbuxa-seed, defaultMode: 0440}}
+        - name: data-secrets
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret: {name: inbuxa-data, items: [{key: pg-password, path: pg-password}, {key: nats-password, path: nats-password}]}
+              - secret: {name: inbuxa-s3, items: [{key: secret-key, path: s3-secret-key}]}
+        - {name: var, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}

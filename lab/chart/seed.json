@@ -1,0 +1,60 @@
+{
+  "using": ["urn:ietf:params:jmap:core", "urn:inbuxa:jmap:registry"],
+  "methodCalls": [
+    ["x:Domain/set", {"create": {"d": {
+      "name": "lab.test",
+      "dkimManagement": {"@type": "Automatic"}
+    }}}, "domain"],
+
+    ["x:SystemSettings/set", {"update": {"singleton": {
+      "defaultHostname": "mail.lab.test",
+      "defaultDomainId": "#d"
+    }}}, "settings"],
+
+    ["x:BlobStore/set", {"update": {"singleton": {
+      "@type": "S3", "bucket": "inbuxa-blobs",
+      "region": {"@type": "Custom", "customEndpoint": "http://garage.data.svc:3900", "customRegion": "garage"},
+      "accessKey": {"@type": "Value", "value": {"$file": "/etc/inbuxa/seed-secrets/s3-access-key"}},
+      "secretKey": {"@type": "File", "filePath": "/etc/inbuxa/secrets/s3-secret-key"},
+      "timeout": 30000, "maxRetries": 3, "verifyAfterWrite": false
+    }}}, "blob"],
+
+    ["x:Coordinator/set", {"update": {"singleton": {
+      "@type": "Nats", "addresses": {"nats.data.svc:4222": true}, "authUsername": "inbuxa",
+      "authSecret": {"@type": "File", "filePath": "/etc/inbuxa/secrets/nats-password"}
+    }}}, "coordinator"],
+
+    ["x:ClusterRole/set", {"create": {
+      "peer": {
+        "name": "peer",
+        "description": "front: protocols, task queue, indexing, maintenance; no scheduler, no outbound",
+        "tasks": {"@type": "DisableSome", "taskTypes": {
+          "taskScheduler": true, "outboundMta": true, "spamClassifierTraining": true,
+          "metricsCalculate": true, "metricsPush": true, "pushNotifications": true}},
+        "listeners": {"@type": "EnableAll"}
+      },
+      "peer-mta": {
+        "name": "peer-mta",
+        "description": "mta: peer plus outbound mail",
+        "tasks": {"@type": "DisableSome", "taskTypes": {
+          "taskScheduler": true, "spamClassifierTraining": true,
+          "metricsCalculate": true, "metricsPush": true, "pushNotifications": true}},
+        "listeners": {"@type": "EnableAll"}
+      }
+    }}, "roles"],
+
+    ["x:Account/set", {"create": {
+      "admin": {
+        "@type": "User", "name": "admin", "domainId": "#d",
+        "description": "System administrator",
+        "credentials": {"0": {"@type": "Password", "secret": {"$file": "/etc/inbuxa/seed-secrets/admin-password"}}},
+        "roles": {"@type": "Admin"}
+      },
+      "alice": {
+        "@type": "User", "name": "alice", "domainId": "#d",
+        "credentials": {"0": {"@type": "Password", "secret": {"$file": "/etc/inbuxa/seed-secrets/alice-password"}}},
+        "roles": {"@type": "User"}
+      }
+    }}, "accounts"]
+  ]
+}
