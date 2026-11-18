@@ -1,0 +1,55 @@
+# A single Garage node (replication factor 1) is enough for the lab: the blob
+# store is the operator's to make highly available, not the chart's.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage
+  namespace: data
+data:
+  garage.toml: |
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    db_engine = "sqlite"
+    replication_factor = 1
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    [admin]
+    api_bind_addr = "[::]:3903"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garage
+  namespace: data
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: garage}}
+  template:
+    metadata: {labels: {app: garage}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: garage
+          image: GARAGE_IMAGE
+          env:
+            - {name: GARAGE_RPC_SECRET, valueFrom: {secretKeyRef: {name: garage-rpc, key: secret}}}
+          ports: [{containerPort: 3900, name: s3}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/garage.toml, subPath: garage.toml}
+            - {name: data, mountPath: /var/lib/garage}
+      volumes:
+        - {name: config, configMap: {name: garage}}
+        - {name: data, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: data
+spec:
+  selector: {app: garage}
+  ports: [{name: s3, port: 3900, targetPort: 3900}]

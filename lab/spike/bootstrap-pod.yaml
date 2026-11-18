@@ -1,0 +1,35 @@
+# First boot: a server with no config.json starts in bootstrap mode, where
+# x:Bootstrap/set names the data store and creates the administrator, the
+# default listeners and the signing keys. /etc/inbuxa is writable here
+# because bootstrap writes config.json; normal nodes mount it read-only.
+# INBUXA_RECOVERY_ADMIN pins the temporary administrator; without it the
+# server prints a one-time password to the log, which would reach whatever
+# collects pod logs.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inbuxa-bootstrap
+  namespace: inbuxa
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext: {runAsNonRoot: true, runAsUser: 2000, runAsGroup: 2000, fsGroup: 2000, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: server
+      image: inbuxa-lab/server:rc27
+      imagePullPolicy: Never
+      env:
+        - {name: INBUXA_HOSTNAME, value: bootstrap}
+        - {name: INBUXA_RECOVERY_ADMIN, valueFrom: {secretKeyRef: {name: inbuxa-recovery, key: admin}}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}}
+      volumeMounts:
+        - {name: etc, mountPath: /etc/inbuxa}
+        - {name: data-secrets, mountPath: /etc/inbuxa/secrets}
+        - {name: var, mountPath: /var/lib/inbuxa}
+        - {name: tmp, mountPath: /tmp}
+  volumes:
+    - {name: etc, emptyDir: {}}
+    - name: data-secrets
+      secret: {secretName: inbuxa-data, items: [{key: pg-password, path: pg-password}]}
+    - {name: var, emptyDir: {}}
+    - {name: tmp, emptyDir: {}}

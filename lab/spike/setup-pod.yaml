@@ -1,0 +1,35 @@
+# A one-off server in recovery mode: port 8080 only, the recovery admin from
+# Secret inbuxa-recovery. Used to point a fresh store at NATS and S3 and to
+# create the role groups before any normal node starts.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inbuxa-setup
+  namespace: inbuxa
+  labels: {app: inbuxa-setup}
+spec:
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 2000, runAsGroup: 2000, fsGroup: 2000, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: server
+      image: inbuxa-lab/server:rc27
+      imagePullPolicy: Never
+      env:
+        - {name: INBUXA_HOSTNAME, value: setup}
+        - {name: INBUXA_RECOVERY_MODE, value: "1"}
+        - {name: INBUXA_RECOVERY_ADMIN, valueFrom: {secretKeyRef: {name: inbuxa-recovery, key: admin}}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}}
+      volumeMounts:
+        - {name: config, mountPath: /etc/inbuxa/config.json, subPath: config.json}
+        - {name: data-secrets, mountPath: /etc/inbuxa/secrets}
+        - {name: var, mountPath: /var/lib/inbuxa}
+        - {name: tmp, mountPath: /tmp}
+  volumes:
+    - {name: config, configMap: {name: inbuxa-config}}
+    - name: data-secrets
+      projected:
+        sources:
+          - secret: {name: inbuxa-data, items: [{key: pg-password, path: pg-password}, {key: nats-password, path: nats-password}]}
+          - secret: {name: inbuxa-s3, items: [{key: secret-key, path: s3-secret-key}]}
+    - {name: var, emptyDir: {}}
+    - {name: tmp, emptyDir: {}}

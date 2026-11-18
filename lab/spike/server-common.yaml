@@ -1,0 +1,12 @@
+# Server pieces shared by the spike manifests: config.json (the data store,
+# with its password as a File secret) and nothing else. Everything else lives
+# in the store.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inbuxa-config
+  namespace: inbuxa
+data:
+  config.json: |
+    {"@type":"PostgreSql","host":"inbuxa-pg-rw.data.svc","port":5432,"database":"inbuxa","authUsername":"inbuxa",
+     "authSecret":{"@type":"File","filePath":"/etc/inbuxa/secrets/pg-password"},"useTls":false,"poolMaxConnections":20}

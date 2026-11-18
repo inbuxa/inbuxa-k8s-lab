@@ -1,0 +1,41 @@
+# Spike S4: the "core" role group (no INBUXA_ROLE: every task, including the
+# scheduler) at two replicas, to see whether background work is ever done
+# twice. Pod Security "restricted" settings throughout.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inbuxa-core
+  namespace: inbuxa
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: inbuxa-server, group: core}}
+  template:
+    metadata: {labels: {app: inbuxa-server, group: core}}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: {runAsNonRoot: true, runAsUser: 2000, runAsGroup: 2000, fsGroup: 2000, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule, labelSelector: {matchLabels: {app: inbuxa-server}}}
+      containers:
+        - name: server
+          image: inbuxa-lab/server:rc27
+          imagePullPolicy: Never
+          env:
+            - name: INBUXA_HOSTNAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/inbuxa/config.json, subPath: config.json, readOnly: true}
+            - {name: data-secrets, mountPath: /etc/inbuxa/secrets, readOnly: true}
+            - {name: var, mountPath: /var/lib/inbuxa}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: inbuxa-config}}
+        - name: data-secrets
+          projected:
+            sources:
+              - secret: {name: inbuxa-data, items: [{key: pg-password, path: pg-password}, {key: nats-password, path: nats-password}]}
+              - secret: {name: inbuxa-s3, items: [{key: secret-key, path: s3-secret-key}]}
+        - {name: var, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}

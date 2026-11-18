@@ -1,0 +1,13 @@
+# Addresses MetalLB hands to LoadBalancer Services: the top of the kind
+# Docker network, which the host and other containers on it can reach.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata: {name: lab, namespace: metallb-system}
+spec:
+  addresses: ["172.19.255.200-172.19.255.250"]
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata: {name: lab, namespace: metallb-system}
+spec:
+  ipAddressPools: [lab]
