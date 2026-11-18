@@ -1,0 +1,18 @@
+# The webmail and the console, on top of values-lab.yaml. The addresses are
+# names only: the tests reach the pods through port-forwards.
+server:
+  publicUrl: https://mail.lab.test
+webmail:
+  enabled: true
+  image:
+    repository: inbuxa-lab/webmail
+    tag: kc3
+    pullPolicy: Never
+  publicUrl: https://webmail.lab.test
+console:
+  enabled: true
+  image:
+    repository: inbuxa-lab/console
+    tag: kc3
+    pullPolicy: Never
+  publicUrl: https://admin.lab.test
