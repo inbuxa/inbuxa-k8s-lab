@@ -1,0 +1,28 @@
+# The chart's values for the lab: the data layer from lab/data-layer, the
+# image loaded into kind, and the secrets lab/up.sh created.
+server:
+  image:
+    repository: inbuxa-lab/server
+    tag: main
+    pullPolicy: Never
+  dataStore:
+    "@type": PostgreSql
+    host: inbuxa-pg-rw.data.svc
+    port: 5432
+    database: inbuxa
+    authUsername: inbuxa
+    authSecret: {"@type": File, filePath: /etc/inbuxa/secrets/pg-password}
+    useTls: false
+    poolMaxConnections: 20
+  secretMounts:
+    - secretName: inbuxa-data
+      items: [{key: pg-password, path: pg-password}, {key: nats-password, path: nats-password}]
+    - secretName: inbuxa-s3
+      items: [{key: secret-key, path: s3-secret-key}]
+  groups:
+    front: {enabled: true, replicas: 2, role: peer}
+    mta: {enabled: true, replicas: 2, role: peer-mta}
+    core: {enabled: true, replicas: 1, role: ""}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
