@@ -14,9 +14,15 @@ step "kind cluster"
 kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" || kind create cluster --name "$KIND_CLUSTER" --config "$here/kind.yaml" --wait 120s
 kubectl config use-context "kind-$KIND_CLUSTER" >/dev/null
 for ns in data inbuxa; do kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null; done
-# inbuxa's pods run under Pod Security "restricted", enforced (K-C4)
-kubectl label --overwrite namespace inbuxa \
+# inbuxa's pods run under Pod Security "restricted", enforced (K-C4), and
+# the lab's own policies (policy/defaults.yaml, K-L3)
+kubectl label --overwrite namespace inbuxa inbuxa.org/policy=enforce \
   pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted >/dev/null
+
+step "Kyverno"
+helm upgrade --install kyverno kyverno/kyverno --version "$KYVERNO_CHART" -n kyverno --create-namespace \
+  --set cleanupController.enabled=false --set reportsController.enabled=false --wait >/dev/null
+kubectl apply -f "$here/policy/defaults.yaml" >/dev/null
 
 step "CloudNativePG operator"
 helm upgrade --install cnpg cnpg/cloudnative-pg --version "$CNPG_CHART" -n cnpg-system --create-namespace --wait >/dev/null

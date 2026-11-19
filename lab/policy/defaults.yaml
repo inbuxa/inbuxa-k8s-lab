@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2026 Coffey Labs LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# The chart's security defaults that Pod Security "restricted" doesn't check
+# (K-L3). They apply in namespaces labelled inbuxa.org/policy=enforce, and to
+# Deployments and Jobs as well as Pods, so a bad value is refused when it's
+# applied, not later when a ReplicaSet can't make its pods.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: inbuxa-read-only-root
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {inbuxa.org/policy: enforce}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem)
+        && c.securityContext.readOnlyRootFilesystem == true)
+        && (!has(object.spec.initContainers) || object.spec.initContainers.all(c, has(c.securityContext)
+        && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem == true))
+      message: every container runs with a read-only root filesystem
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: inbuxa-no-service-account-token
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {inbuxa.org/policy: enforce}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  validations:
+    # The upgrade Job scales the server down through a Role only it holds
+    - expression: >-
+        (has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false)
+        || (has(object.metadata.labels) && object.metadata.labels[?"app.kubernetes.io/component"].orValue("") == "upgrade")
+      message: no pod mounts a service-account token, except the upgrade Job's
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: inbuxa-secrets-as-files
+spec:
+  # Warn until the chart's server image is 27.1-rc.32 (inbuxa-charts#19):
+  # before it, the server takes the webmail's client secret from its
+  # environment. Then Deny.
+  validationActions: [Warn]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {inbuxa.org/policy: enforce}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  validations:
+    - expression: >-
+        object.spec.containers.all(c,
+          (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef)))
+          && (!has(c.envFrom) || c.envFrom.all(e, !has(e.secretRef))))
+      message: secrets are mounted as files, never set in the environment
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: inbuxa-network-policy
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {inbuxa.org/policy: enforce}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: labels
+      expression: 'has(object.metadata.labels) ? object.metadata.labels : {}'
+    - name: policies
+      expression: resource.List("networking.k8s.io/v1", "networkpolicies", namespaceObject.metadata.name).items
+  validations:
+    # A deny-all: both directions, no rules, and a selector this pod matches
+    - expression: >-
+        dyn(variables.policies).exists(np,
+          np.spec.?policyTypes.orValue([]).exists(t, t == "Ingress")
+          && np.spec.?policyTypes.orValue([]).exists(t, t == "Egress")
+          && size(np.spec.?ingress.orValue([])) == 0
+          && size(np.spec.?egress.orValue([])) == 0
+          && !has(np.spec.podSelector.matchExpressions)
+          && np.spec.podSelector.?matchLabels.orValue({}).all(k,
+               k in variables.labels && variables.labels[k] == np.spec.podSelector.matchLabels[k]))
+      message: every pod is under a deny-all NetworkPolicy (networkPolicy.enabled)
