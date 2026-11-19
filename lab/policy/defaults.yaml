@@ -42,11 +42,12 @@ spec:
         operations: [CREATE, UPDATE]
         resources: [pods]
   validations:
-    # The upgrade Job scales the server down through a Role only it holds
+    # The upgrade Job scales the server down through a Role only it holds;
+    # the egress check records an event through one that may do nothing else
     - expression: >-
         (has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false)
-        || (has(object.metadata.labels) && object.metadata.labels[?"app.kubernetes.io/component"].orValue("") == "upgrade")
-      message: no pod mounts a service-account token, except the upgrade Job's
+        || (has(object.metadata.labels) && object.metadata.labels[?"app.kubernetes.io/component"].orValue("") in ["upgrade", "egress-check"])
+      message: no pod mounts a service-account token, except the upgrade Job's and the egress check's
 ---
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
