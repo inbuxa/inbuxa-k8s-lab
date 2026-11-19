@@ -7,10 +7,16 @@
 #   - signs in to the console as its browser would (console-signin.py)
 #
 #   SERVER_TAG=plan lab/chart/frontends-test.sh
+#   SERVER_TAG=plan WEBMAIL_TAG=kw4 lab/chart/frontends-test.sh
+#
+# WEBMAIL_TAG picks another inbuxa-lab/webmail image than the one in
+# values-frontends.yaml.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 SERVER_TAG="${SERVER_TAG:?the server image tag in kind}"
+EXTRA=()
+[ -n "${WEBMAIL_TAG:-}" ] && EXTRA+=(--set webmail.image.tag="$WEBMAIL_TAG")
 K=(kubectl --context kind-inbuxa-lab -n inbuxa)
 CHART="${CHART:-../../../inbuxa-charts/charts/inbuxa}"
 STATE="${STATE:-$HOME/.cache/inbuxa-lab}"
@@ -24,11 +30,15 @@ forward() { # <local port> <target>
 
 echo "== install the webmail and the console"
 helm --kube-context kind-inbuxa-lab -n inbuxa upgrade inbuxa "$CHART" \
-  -f values-lab.yaml -f values-frontends.yaml --set server.image.tag="$SERVER_TAG" \
+  -f values-lab.yaml -f values-frontends.yaml --set server.image.tag="$SERVER_TAG" "${EXTRA[@]}" \
   --wait --timeout 10m >/dev/null
 "${K[@]}" get pods -l 'app.kubernetes.io/component in (webmail,console)' --no-headers
 
-mapfile -t webmail < <("${K[@]}" get pods -l app.kubernetes.io/component=webmail -o name | sort)
+# helm --wait returns before the old pods are gone: pick from the new ones
+"${K[@]}" rollout status deployment/inbuxa-webmail --timeout 5m >/dev/null
+sleep 5
+mapfile -t webmail < <("${K[@]}" get pods -l app.kubernetes.io/component=webmail \
+  --field-selector status.phase=Running -o name | sort)
 [ "${#webmail[@]}" -ge 2 ] || { echo "!! fewer than two webmail pods"; exit 1; }
 forward 18081 "${webmail[0]}"
 forward 18082 "${webmail[1]}"
