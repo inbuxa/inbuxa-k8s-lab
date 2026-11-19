@@ -14,6 +14,9 @@ step "kind cluster"
 kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" || kind create cluster --name "$KIND_CLUSTER" --config "$here/kind.yaml" --wait 120s
 kubectl config use-context "kind-$KIND_CLUSTER" >/dev/null
 for ns in data inbuxa; do kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null; done
+# inbuxa's pods run under Pod Security "restricted", enforced (K-C4)
+kubectl label --overwrite namespace inbuxa \
+  pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted >/dev/null
 
 step "CloudNativePG operator"
 helm upgrade --install cnpg cnpg/cloudnative-pg --version "$CNPG_CHART" -n cnpg-system --create-namespace --wait >/dev/null
