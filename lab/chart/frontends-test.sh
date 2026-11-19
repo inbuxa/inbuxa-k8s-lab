@@ -24,9 +24,16 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 forward() { # <local port> <target>
+  # Something else on the port would answer in the forward's place
+  if ss -ltn "sport = :$1" | grep -q LISTEN; then
+    echo "!! port $1 is in use by something else: PORTS=<first of four free ports> $0" >&2
+    exit 1
+  fi
   "${K[@]}" port-forward "$2" "$1:8080" >/dev/null 2>&1 &
   PIDS+=($!)
 }
+# Four local ports in a row, for the server, the two webmail pods and the console
+P="${PORTS:-18080}"
 
 echo "== install the webmail and the console"
 helm --kube-context kind-inbuxa-lab -n inbuxa upgrade inbuxa "$CHART" \
@@ -40,18 +47,18 @@ sleep 5
 mapfile -t webmail < <("${K[@]}" get pods -l app.kubernetes.io/component=webmail \
   --field-selector status.phase=Running -o name | sort)
 [ "${#webmail[@]}" -ge 2 ] || { echo "!! fewer than two webmail pods"; exit 1; }
-forward 18081 "${webmail[0]}"
-forward 18082 "${webmail[1]}"
-forward 18080 svc/inbuxa-http
-forward 18083 svc/inbuxa-console
+forward $((P + 1)) "${webmail[0]}"
+forward $((P + 2)) "${webmail[1]}"
+forward $P svc/inbuxa-http
+forward $((P + 3)) svc/inbuxa-console
 sleep 3
 
 echo "== webmail: start on ${webmail[0]#pod/}, finish on ${webmail[1]#pod/}"
-python3 signin.py http://127.0.0.1:18081 http://127.0.0.1:18082 http://127.0.0.1:18080 \
+python3 signin.py http://127.0.0.1:$((P + 1)) http://127.0.0.1:$((P + 2)) http://127.0.0.1:$P \
   alice@lab.test "$STATE/alice.password"
 
 echo "== console"
-python3 console-signin.py http://127.0.0.1:18083 http://127.0.0.1:18080 \
+python3 console-signin.py http://127.0.0.1:$((P + 3)) http://127.0.0.1:$P \
   https://admin.lab.test https://mail.lab.test admin@lab.test "$STATE/admin.password"
 
 echo "== both pass"
