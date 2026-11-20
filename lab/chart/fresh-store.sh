@@ -54,6 +54,9 @@ forward() {
 stop_forward() { [ -n "$FORWARD_PID" ] && kill "$FORWARD_PID" 2>/dev/null; FORWARD_PID=""; }
 trap stop_forward EXIT
 
+# The one-off pods' config.json (the chart's own pods have theirs)
+"${K[@]}" apply -f ../spike/server-common.yaml >/dev/null
+
 echo "== stopping everything on the old store"
 "${K[@]}" -n inbuxa scale deploy --all --replicas=0 >/dev/null 2>&1 || true
 "${K[@]}" -n inbuxa wait --for=delete pod -l app.kubernetes.io/component=server --timeout=180s >/dev/null 2>&1 || true

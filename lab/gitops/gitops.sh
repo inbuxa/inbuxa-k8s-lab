@@ -283,7 +283,7 @@ else:
     ok = current and ready.get("status") == "True" and got == want
     failed = current and ready.get("status") == "False" and (
         cond.get("Stalled", {}).get("status") == "True" or ready.get("reason", "").endswith("Failed"))
-    print(json.dumps({"ok": ok, "failed": failed, "op": f"gen:{s.get('observedGeneration')}",
+    print(json.dumps({"ok": ok, "failed": failed, "op": "gen:" + str(s.get("observedGeneration")),
                       "deployed": hist[0].get("lastDeployed", "") if hist else "",
                       "ready": ready.get("status"), "reason": ready.get("reason"),
                       "version": got,
