@@ -47,6 +47,31 @@ once: a server pod killed, a node drained, the PostgreSQL primary failed
 over, NATS restarted, S3 frozen for 60 s. CI runs it nightly on the newest
 Kubernetes minor, both architectures (`CHAOS=1 lab/e2e.sh`).
 
+`lab/chart/webmail-restart-test.sh` restarts the webmail under open tabs
+and checks no request failed and every live-update stream came back.
+
+`lab/soak/soak.sh start` is the soak: a week (`SOAK_DAYS`) of steady load
+on an installed chart, with a different chaos scenario each day. Mail in
+every 10 s and out to the sink every minute, two IMAP clients in IDLE (all
+from this host, through the load balancer), and three webmail tabs in a pod.
+Each day ends with a report (`day-N.md` in `~/.cache/inbuxa-lab/soak`):
+mail sent, arrived, late, lost or doubled, IDLE notices and drops, webmail
+failures, and every pod restart or replacement, planned (during chaos) or
+not. `report.md` sums up the run. It passes with no message lost or
+doubled and no unplanned restart. It runs as a systemd user unit, so
+`soak.sh status` and `stop` work from any shell, and `start` resumes a
+stopped run. `SOAK_DAY=1800 SOAK_DAYS=2 CHAOS_AFTER=300` tries it in an
+hour.
+
+`lab/report.sh` is for release-candidate testers on their own cluster: the
+Kubernetes version and distribution, the nodes' OS, kernel, runtime and
+architecture, the network plugin and load balancer, the Pod Security level
+and anything it refused, the chart and image versions, each component's
+pods, and any test results (`--results FILE`), as a block to paste into a
+report. It only reads. Names, registries, addresses and hostnames are left
+out, and the block is scrubbed of anything shaped like an IP address or a
+hostname, unless `--include-names`.
+
 `lab/up.sh` is just the cluster: kind, Kyverno and the policies, MetalLB,
 and the data layer (CloudNativePG, NATS, Garage). It adds the Helm
 repositories it needs; the versions are pinned in `lab/versions.env`.
