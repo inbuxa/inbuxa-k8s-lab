@@ -6,9 +6,9 @@
 # layer (up.sh), then the chart with the released images the next chart
 # release names (inbuxa-charts release/suite.yaml), seeded, then
 #
-#   1. mail: in over SMTP, found over IMAPS, through the mail Service
-#   2. the webmail: signing in across both replicas
-#   3. the console: signing in as its browser would
+#   every client check, chart/mailcheck.sh: SMTP in, submission, IMAP,
+#   JMAP, SMTP out to an outside server, CalDAV, CardDAV, the webmail across
+#   both replicas and the console
 #
 # and how long each part took. CI runs this on a fresh runner; on the bench
 # it builds the lab from scratch too, so take the lab down first
@@ -30,7 +30,6 @@ SUITE="$CHART_REPO/release/suite.yaml"
 STATE="${STATE:-$HOME/.cache/inbuxa-lab}"
 K=(kubectl --context "kind-$KIND_CLUSTER" -n inbuxa)
 P="${PORTS:-18080}"
-PIDS=()
 t0=$SECONDS
 SUMMARY=()
 lap() { SUMMARY+=("| $1 | $(( SECONDS - ${2:-$t0} ))s |"); }
@@ -42,7 +41,6 @@ report() {
 }
 on_exit() {
   rc=$?
-  for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
   if [ "$rc" != 0 ]; then
     SUMMARY+=("| **failed** | after $(( SECONDS - t0 ))s |")
     echo "== failed: pods and events"
@@ -94,46 +92,10 @@ helm --kube-context "kind-$KIND_CLUSTER" -n inbuxa upgrade --install inbuxa "$CH
 "${K[@]}" get pods --no-headers -o wide | awk '{print "   " $1, $3, $7}'
 lap "chart install (seed, server, webmail, console)" "$s"
 
-echo "== 1. mail"
+echo "== the client checks (chart/mailcheck.sh)"
 s=$SECONDS
-lb=""
-for _ in $(seq 1 30); do
-  lb="$("${K[@]}" get svc inbuxa-mail -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
-  [ -n "$lb" ] && break
-  sleep 2
-done
-[ -n "$lb" ] || { echo "!! the mail Service has no address" >&2; exit 1; }
-ACCOUNT=alice@lab.test PASSWORD_FILE="$STATE/alice.password" timeout 150 python3 "$here/chart/mailtest.py" "$lb"
-lap "mail: SMTP in, IMAPS found" "$s"
-
-forward() { # <local port> <target>
-  if ss -ltn "sport = :$1" | grep -q LISTEN; then
-    echo "!! port $1 is in use: PORTS=<first of four free ports> $0" >&2
-    exit 1
-  fi
-  "${K[@]}" port-forward "$2" "$1:8080" >/dev/null 2>&1 &
-  PIDS+=($!)
-}
-mapfile -t webmail < <("${K[@]}" get pods -l app.kubernetes.io/component=webmail \
-  --field-selector status.phase=Running -o name | sort)
-[ "${#webmail[@]}" -ge 2 ] || { echo "!! fewer than two webmail pods" >&2; exit 1; }
-forward $((P + 1)) "${webmail[0]}"
-forward $((P + 2)) "${webmail[1]}"
-forward "$P" svc/inbuxa-http
-forward $((P + 3)) svc/inbuxa-console
-sleep 3
-
-echo "== 2. webmail: start on ${webmail[0]#pod/}, finish on ${webmail[1]#pod/}"
-s=$SECONDS
-python3 "$here/chart/signin.py" "http://127.0.0.1:$((P + 1))" "http://127.0.0.1:$((P + 2))" \
-  "http://127.0.0.1:$P" alice@lab.test "$STATE/alice.password"
-lap "webmail sign-in across replicas" "$s"
-
-echo "== 3. console"
-s=$SECONDS
-python3 "$here/chart/console-signin.py" "http://127.0.0.1:$((P + 3))" "http://127.0.0.1:$P" \
-  https://admin.lab.test https://mail.lab.test admin@lab.test "$STATE/admin.password"
-lap "console sign-in" "$s"
+PORTS="$P" STATE="$STATE" "$here/chart/mailcheck.sh"
+lap "mail (SMTP in, submission, IMAP, JMAP, SMTP out), CalDAV, CardDAV, webmail, console" "$s"
 
 lap "**total**"
 echo "== passed in $(( SECONDS - t0 ))s"

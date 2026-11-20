@@ -1,0 +1,121 @@
+# SPDX-FileCopyrightText: 2026 Coffey Labs LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# The outside world's mail server, for mail going out (K-L2): an SMTP
+# server that takes anything and prints each message as one JSON line in
+# its log, for mailcheck.py to find. mailcheck.sh routes the domain
+# sink.test here (a Relay route), so nothing leaves the cluster.
+#
+# Plain Python 3.9 in the CloudNativePG PostgreSQL image (IMAGE, from
+# versions.env), which the cluster already has, so no new image. Own
+# namespace, outside the inbuxa policies, but restricted-shaped anyway.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-sink
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: sink, namespace: lab-sink}
+data:
+  sink.py: |
+    import asyncio, email, email.policy, json, sys, time
+
+    def log(rec):
+        print(json.dumps(rec), flush=True)
+
+    async def session(reader, writer):
+        peer = writer.get_extra_info("peername")
+        def send(line):
+            writer.write((line + "\r\n").encode())
+        send("220 lab-sink ESMTP")
+        mail_from, rcpts = None, []
+        try:
+            while True:
+                raw = await asyncio.wait_for(reader.readline(), 120)
+                if not raw:
+                    break
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                verb = line[:4].upper()
+                if verb in ("EHLO", "HELO"):
+                    send("250-lab-sink" if verb == "EHLO" else "250 lab-sink")
+                    if verb == "EHLO":
+                        send("250-8BITMIME")
+                        send("250 SMTPUTF8")
+                    ehlo = line[5:].strip()
+                elif verb == "MAIL":
+                    mail_from, rcpts = line.split(":", 1)[1].strip().split(" ")[0].strip("<>"), []
+                    send("250 ok")
+                elif verb == "RCPT":
+                    rcpts.append(line.split(":", 1)[1].strip().split(" ")[0].strip("<>"))
+                    send("250 ok")
+                elif verb == "DATA":
+                    send("354 go ahead")
+                    await writer.drain()
+                    data = bytearray()
+                    while True:
+                        l = await asyncio.wait_for(reader.readline(), 120)
+                        if l in (b".\r\n", b".\n") or not l:
+                            break
+                        data += l[1:] if l.startswith(b"..") else l
+                    msg = email.message_from_bytes(bytes(data), policy=email.policy.default)
+                    log({"at": time.time(), "peer": peer[0], "ehlo": ehlo, "from": mail_from, "rcpts": rcpts,
+                         "subject": str(msg.get("Subject", "")),
+                         "dkim": [str(h) for h in msg.get_all("DKIM-Signature", [])]})
+                    send("250 queued")
+                elif verb == "RSET":
+                    mail_from, rcpts = None, []
+                    send("250 ok")
+                elif verb == "NOOP":
+                    send("250 ok")
+                elif verb == "QUIT":
+                    send("221 bye")
+                    break
+                else:
+                    send("502 not here")
+                await writer.drain()
+        except (asyncio.TimeoutError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    async def main():
+        server = await asyncio.start_server(session, "0.0.0.0", 2525)
+        print("lab-sink listening on 2525", flush=True)
+        async with server:
+            await server.serve_forever()
+
+    asyncio.run(main())
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sink, namespace: lab-sink}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: lab-sink}}
+  template:
+    metadata: {labels: {app: lab-sink}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true, runAsUser: 2000, runAsGroup: 2000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: sink
+          image: IMAGE
+          imagePullPolicy: IfNotPresent
+          command: [python3, -u, /sink/sink.py]
+          ports: [{name: smtp, containerPort: 2525}]
+          readinessProbe: {tcpSocket: {port: smtp}, periodSeconds: 2}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: sink, mountPath: /sink}]
+      volumes: [{name: sink, configMap: {name: sink}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sink, namespace: lab-sink}
+spec:
+  selector: {app: lab-sink}
+  ports: [{name: smtp, port: 25, targetPort: smtp}]
