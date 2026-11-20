@@ -69,7 +69,6 @@ jobs:
 
   e2e:
     needs: matrix
-    if: false
     name: e2e (${{ matrix.kubernetes.minor }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -117,7 +116,7 @@ jobs:
   # architectures.
   chaos:
     needs: matrix
-    if: false
+    if: ${{ inputs.chart_ref == '' }}
     name: chaos (${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -154,7 +153,7 @@ jobs:
   # both architectures.
   gitops:
     needs: matrix
-    if: false
+    if: ${{ inputs.chart_ref == '' }}
     name: gitops (${{ matrix.tool }}, ${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -200,34 +199,3 @@ jobs:
           fi
           kubectl -n inbuxa get jobs,pods -o wide || true
           kubectl -n inbuxa logs job/inbuxa-upgrade --tail=40 || true
-
-  probe:
-    needs: matrix
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: inbuxa/inbuxa-k8s-lab
-          ref: ${{ github.sha }}
-          path: inbuxa-k8s-lab
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: inbuxa/inbuxa-charts
-          ref: main
-          path: inbuxa-charts
-          persist-credentials: false
-      - run: |
-          inbuxa-k8s-lab/lab/tools.sh "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - env:
-          KIND_NODE_IMAGE: ${{ fromJSON(needs.matrix.outputs.newest).image }}
-        run: inbuxa-k8s-lab/lab/e2e.sh
-      - run: |
-          for d in inbuxa-front inbuxa-core inbuxa-mta inbuxa-console inbuxa-webmail; do
-            for i in 1 2 3; do
-              echo "##### $d try $i"
-              RESTART=$d inbuxa-k8s-lab/lab/chart/webmail-restart-test.sh || echo "##### FAILED $d try $i"
-            done
-          done
