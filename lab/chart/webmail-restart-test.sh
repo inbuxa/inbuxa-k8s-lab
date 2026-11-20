@@ -16,6 +16,12 @@
 #
 # WEBMAIL_IMAGE (a local image loaded into kind) installs that webmail
 # first, with values-frontends.yaml; otherwise the installed one is tested.
+#
+# RESTART names the Deployments restarted under the tabs, one after
+# another (default inbuxa-webmail), so the same check covers the server's
+# groups the webmail talks to:
+#
+#   RESTART="inbuxa-front inbuxa-core" lab/chart/webmail-restart-test.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -75,11 +81,14 @@ if [ "$("${K[@]}" -n lab-sink get pod webmail-tabs -o jsonpath='{.status.phase}'
   fail "the tabs stopped before the restart"
 fi
 
-image="$("${K[@]}" -n inbuxa get deploy inbuxa-webmail -o jsonpath='{.spec.template.spec.containers[0].image}')"
-echo "== restarting the webmail ($image) under them"
-"${K[@]}" -n inbuxa rollout restart deploy/inbuxa-webmail >/dev/null
-"${K[@]}" -n inbuxa rollout status deploy/inbuxa-webmail --timeout=5m >/dev/null
-sleep 20
+for d in ${RESTART:-inbuxa-webmail}; do
+  image="$("${K[@]}" -n inbuxa get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+  echo "== restarting $d ($image) under them"
+  "${K[@]}" -n inbuxa rollout restart "deploy/$d" >/dev/null
+  "${K[@]}" -n inbuxa rollout status "deploy/$d" --timeout=5m >/dev/null
+  # rollout status returns before the old pods have finished going
+  sleep 20
+done
 
 "${K[@]}" -n lab-sink exec webmail-tabs -- touch /tmp/stop
 "${K[@]}" -n lab-sink wait --for=jsonpath='{.status.phase}'=Succeeded pod/webmail-tabs --timeout=120s >/dev/null \
