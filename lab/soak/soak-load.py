@@ -84,6 +84,17 @@ def message(frm, to, subject):
     return msg
 
 
+def quit_quietly(s):
+    """QUIT, whatever the answer: the message is the server's once DATA got
+    its 250, and a stopping server answers QUIT 421 (see chart/mailflow.py)."""
+    try:
+        s.quit()
+    except (OSError, smtplib.SMTPException):
+        pass
+    finally:
+        s.close()
+
+
 def every(seconds, fn):
     """fn() every `seconds`, keeping to the schedule; fn handles its errors."""
     nxt = time.time()
@@ -101,10 +112,13 @@ def inbound():
     msg = message(f"soak@m{n}.{run}.sender.test", account, f"soak {run} in {n}")
     try:
         # As an MTA waits (RFC 5321 4.5.3.2); see chart/mailflow.py
-        with smtplib.SMTP(timeout=20) as s:
+        s = smtplib.SMTP(timeout=20)
+        try:
             s.connect(lb, 25)
             s.sock.settimeout(300)
             s.send_message(msg)
+        finally:
+            quit_quietly(s)
     except (OSError, smtplib.SMTPException) as e:
         with lock:
             S["inbound"]["retries"] += 1
@@ -122,10 +136,13 @@ def outbound():
         n = S["outbound"]["next"]
     msg = message(account, f"soak-{n % SINK_SPREAD}@sink.test", f"soak {run} out {n}")
     try:
-        with smtplib.SMTP_SSL(lb, 465, context=tls, timeout=20) as s:
+        s = smtplib.SMTP_SSL(lb, 465, context=tls, timeout=20)
+        try:
             s.sock.settimeout(300)
             s.login(account, password)
             s.send_message(msg)
+        finally:
+            quit_quietly(s)
     except (OSError, smtplib.SMTPException) as e:
         with lock:
             S["outbound"]["retries"] += 1

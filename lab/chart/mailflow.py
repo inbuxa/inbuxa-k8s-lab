@@ -39,10 +39,26 @@ def send(n):
     # As an MTA waits (RFC 5321 4.5.3.2): a dead address fails fast, but a
     # slow reply is waited for, up to minutes. Giving up early on the reply
     # to the end of DATA and sending again is how a sender makes duplicates.
-    with smtplib.SMTP(timeout=20) as s:
+    s = smtplib.SMTP(timeout=20)
+    try:
         s.connect(lb, 25)
         s.sock.settimeout(300)
         s.send_message(msg)
+    finally:
+        quit_quietly(s)
+
+
+def quit_quietly(s):
+    """QUIT, whatever the answer. The message is the server's once the end
+    of DATA got its 250; a server that's stopping answers QUIT with 421, and
+    taking that as a failure and sending again makes a duplicate (smtplib's
+    `with` does just that: its __exit__ raises on anything but 221)."""
+    try:
+        s.quit()
+    except (OSError, smtplib.SMTPException):
+        pass
+    finally:
+        s.close()
 
 
 accepted, retries, started = 0, 0, time.time()
