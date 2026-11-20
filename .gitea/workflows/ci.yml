@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Coffey Labs LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# The quick checks, on every pull request and on main: every script parses
+# (bash -n, Python compile), and every YAML file and workflow loads. The
+# end-to-end runs need Docker and kind, so they're on the GitHub replica
+# (.github/workflows/e2e.yml).
+#
+# This file being here also keeps Gitea from running .github/workflows
+# itself: it reads those only when .gitea/workflows doesn't exist, and their
+# jobs would wait for GitHub's runners for ever.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: light
+    container:
+      image: mirror.gcr.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 # trixie-slim
+    steps:
+      - name: Packages
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates git python3-minimal python3-yaml >/dev/null
+      - uses: coffey-labs/actions/checkout@fab0c4d45e0162963965f1555df27b7bed5e20ec
+      - name: Scripts parse
+        run: |
+          fail=0
+          while IFS= read -r -d '' f; do bash -n "$f" || { echo "::error file=$f::doesn't parse"; fail=1; }; done \
+            < <(find lab -name '*.sh' -print0)
+          while IFS= read -r -d '' f; do python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" \
+            || { echo "::error file=$f::doesn't parse"; fail=1; }; done < <(find lab -name '*.py' -print0)
+          exit $fail
+      - name: YAML loads
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys, yaml
+          bad = 0
+          for p in sorted(pathlib.Path(".").rglob("*.y*ml")):
+              if ".git" in p.parts:
+                  continue
+              try:
+                  list(yaml.safe_load_all(p.read_text()))
+              except yaml.YAMLError as e:
+                  print(f"::error file={p}::{e}".replace("\n", " ")); bad = 1
+          sys.exit(bad)
+          PY

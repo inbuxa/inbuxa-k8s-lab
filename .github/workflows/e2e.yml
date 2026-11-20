@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 Coffey Labs LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# The lab end to end on a fresh GitHub runner, amd64 and arm64 (S7, K-L1):
+# lab/tools.sh, then lab/e2e.sh with the chart from inbuxa-charts' main.
+# Runs on the GitHub replica only (vars.BUILD_ON), where the runners are;
+# Gitea's runners don't run it.
+#
+# The full matrix (three Kubernetes minors, nightly, chart PRs) is K-L8.
+name: e2e
+
+on:
+  workflow_dispatch:
+  # Every branch: the lab's PRs are on Gitea, its branches reach GitHub by
+  # the push mirror
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    if: ${{ vars.BUILD_ON == 'github' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: inbuxa-k8s-lab
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-charts
+          # main, unless the repo variable CHART_REF names a chart branch
+          ref: ${{ vars.CHART_REF || 'main' }}
+          path: inbuxa-charts
+          persist-credentials: false
+      - name: Tools (pinned, checksummed)
+        run: |
+          inbuxa-k8s-lab/lab/tools.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: The runner
+        run: |
+          nproc; free -h | head -2; df -h / | tail -1
+          docker version --format 'docker {{.Server.Version}}'
+      - name: Lab end to end
+        run: inbuxa-k8s-lab/lab/e2e.sh
+      - name: Memory at the end
+        if: always()
+        run: |
+          free -h | head -2
+          docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' || true
