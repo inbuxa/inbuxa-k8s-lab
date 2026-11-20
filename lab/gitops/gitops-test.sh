@@ -11,7 +11,8 @@
 #   2. self-heal: the webmail scaled down by hand comes back to two
 #   3. an upgrade, 27.1.0-lab.1 to -lab.2 with every image pinned by digest
 #      as a chart release pins them: everything rolls, the upgrade hook
-#      runs, and webmail tabs open across it are never signed out
+#      runs, and webmail tabs open across it are never signed out and
+#      no request of theirs fails
 #   4. after it: the same Secrets, mail works, and steady again
 #
 #   lab/gitops/gitops-test.sh TOOL
@@ -153,6 +154,9 @@ for e in r["errors"][:10]:
     print(f"   {e}")
 if r["signins"] != 1:
     print("!! the upgrade signed the tabs out", file=sys.stderr)
+    sys.exit(1)
+if r["failed"]:
+    print("!! a webmail request failed during the upgrade", file=sys.stderr)
     sys.exit(1)
 PY
 
