@@ -47,5 +47,7 @@ tar -xzf "$WORK/helm.tgz" -C "$WORK" "linux-$ARCH/helm"
 install -m 0755 "$WORK/linux-$ARCH/helm" "$DIR/helm"
 
 "$DIR/kind" version
-"$DIR/kubectl" version --client | head -1
+# sed reads everything: head would leave kubectl writing to a closed pipe
+# (SIGPIPE, 141 under pipefail)
+"$DIR/kubectl" version --client | sed -n 1p
 "$DIR/helm" version --short
