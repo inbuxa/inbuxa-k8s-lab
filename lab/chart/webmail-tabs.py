@@ -17,14 +17,21 @@ and prints one JSON line: requests made and failed (with the errors), and
 per tab how its streams ended (cleanly, or cut off mid-stream) and the
 longest wait for a stream to deliver again. A clean end is what the
 browser takes in its stride; a failed request is what shows an error.
+
+For the soak (K-L7): INTERVAL sets the time between requests (0.2 s);
+SUMMARY_EVERY (seconds) prints that line every so often while running,
+with "at" and the errors since the last one; with no STOP_FILE it runs
+until stopped.
 """
 import http.client, json, os, sys, threading, time, urllib.parse
 
 webmail, server = sys.argv[1:3]
 account = os.environ["ACCOUNT"]
 password = open(os.environ["PASSWORD_FILE"]).read().strip()
-stop = os.environ["STOP_FILE"]
+stop = os.environ.get("STOP_FILE", "/nonexistent/stop")
 TABS = int(os.environ.get("TABS", "3"))
+INTERVAL = float(os.environ.get("INTERVAL", "0.2"))
+SUMMARY_EVERY = float(os.environ.get("SUMMARY_EVERY", "0"))
 
 
 def request(base, method, path, headers=None, body=None, timeout=30):
@@ -65,7 +72,7 @@ def sign_in():
 session, mail_account = sign_in()
 H = {"cookie": f"ihm_session={session}"}
 lock = threading.Lock()
-report = {"requests": 0, "failed": 0, "errors": [], "tabs": []}
+report = {"requests": 0, "failed": 0, "signins": 1, "errors": [], "tabs": []}
 
 
 def tab(i):
@@ -79,6 +86,10 @@ def tab(i):
             conn = http.client.HTTPConnection(u.hostname, u.port, timeout=45)
             conn.request("GET", "/api/events?types=*&closeafter=no&ping=30", headers=dict(H, accept="text/event-stream"))
             res = conn.getresponse()
+            if res.status == 401:   # signed out: the request loop signs in again
+                conn.close()
+                time.sleep(1)
+                continue
             if res.status != 200:
                 raise RuntimeError(f"HTTP {res.status}")
             me["streams"] += 1
@@ -107,19 +118,34 @@ for t in threads:
 
 body = json.dumps({"using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
                    "methodCalls": [["Mailbox/get", {"accountId": mail_account, "properties": ["name"]}, "0"]]})
+next_summary = time.time() + SUMMARY_EVERY
 while not os.path.exists(stop):
     with lock:
         report["requests"] += 1
     try:
         res, data = request(webmail, "POST", "/api/jmap", dict(H, **{"content-type": "application/json",
                             "x-requested-with": "ihasmail"}), body)
+        if res.status == 401:
+            # The session ran out (12 h by default): sign in again, as the
+            # page sends the browser back to; the tabs pick up the new cookie
+            session, mail_account = sign_in()
+            H["cookie"] = f"ihm_session={session}"
+            with lock:
+                report["signins"] += 1
+                report["requests"] -= 1
+            continue
         if res.status != 200 or b"Mailbox/get" not in data:
             raise RuntimeError(f"HTTP {res.status} {data[:80]!r}")
     except Exception as e:
         with lock:
             report["failed"] += 1
             report["errors"].append(f"request: {type(e).__name__}: {e}"[:160])
-    time.sleep(0.2)
+    time.sleep(INTERVAL)
+    if SUMMARY_EVERY and time.time() >= next_summary:
+        next_summary += SUMMARY_EVERY
+        with lock:
+            print(json.dumps(dict(report, at=time.time(), errors=report["errors"][:15])), flush=True)
+            report["errors"] = []
 
 for t in threads:
     t.join(timeout=50)
