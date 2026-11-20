@@ -58,7 +58,7 @@ Each day ends with a report (`day-N.md` in `~/.cache/inbuxa-lab/soak`):
 mail sent, arrived, late, lost or doubled, IDLE notices and drops, webmail
 failures, and every pod restart or replacement, planned (during chaos) or
 not. `report.md` sums up the run. It passes with no message lost or
-doubled and no unplanned restart. It runs as a systemd user unit, so
+doubled, no unplanned restart, and every chaos scenario recovered. It runs as a systemd user unit, so
 `soak.sh status` and `stop` work from any shell, and `start` resumes a
 stopped run. `SOAK_DAY=1800 SOAK_DAYS=2 CHAOS_AFTER=300` tries it in an
 hour.

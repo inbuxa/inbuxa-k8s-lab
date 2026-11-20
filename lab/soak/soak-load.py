@@ -13,7 +13,10 @@ where it left off when started again: everything it knows is in STATE.
             deleted, so the mailbox stays small; a number seen again after
             that came twice
   outbound  a message every OUT_EVERY s (60) over submission 465 with AUTH,
-            to probe@sink.test; soak.sh checks the sink received each once
+            to soak-0@sink.test ... soak-9@sink.test in turn (the server
+            allows 25 an hour from one sender domain to one recipient, and
+            probe@sink.test is left to chart/mailcheck.py); soak-watch.py
+            checks the sink received each once
   idle      IDLE_CLIENTS (2) IMAP connections in IDLE: how often they're
             told of new mail, and how often they drop. They watch the
             mailbox the soak's mail lands in (verify finds it: unknown
@@ -34,7 +37,7 @@ state_dir = os.environ["STATE"]
 IN_EVERY = float(os.environ.get("IN_EVERY", "10"))
 OUT_EVERY = float(os.environ.get("OUT_EVERY", "60"))
 IDLE_CLIENTS = int(os.environ.get("IDLE_CLIENTS", "2"))
-SINK = os.environ.get("SINK_RCPT", "probe@sink.test")
+SINK_SPREAD = int(os.environ.get("SINK_SPREAD", "10"))
 tls = ssl.create_default_context()
 tls.check_hostname = False
 tls.verify_mode = ssl.CERT_NONE
@@ -117,7 +120,7 @@ def inbound():
 def outbound():
     with lock:
         n = S["outbound"]["next"]
-    msg = message(account, SINK, f"soak {run} out {n}")
+    msg = message(account, f"soak-{n % SINK_SPREAD}@sink.test", f"soak {run} out {n}")
     try:
         with smtplib.SMTP_SSL(lb, 465, context=tls, timeout=20) as s:
             s.sock.settimeout(300)

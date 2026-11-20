@@ -203,7 +203,8 @@ def report(day):
     restarts = [e for e in evs if e["kind"] in ("restart", "pod-new")]
     unplanned = [e for e in restarts if not in_chaos(e["at"], chaos_windows())]
     twice = d.get("in_twice", 0) + d.get("out_twice", 0)
-    ok = not lost_in and not lost_out and not twice and not unplanned
+    chaos_ok = all(w.get("result") == "ok" for w in windows)
+    ok = not lost_in and not lost_out and not twice and not unplanned and chaos_ok
     fmt = lambda t: time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t))
     lines = [
         f"# Soak day {day}: {'clean' if ok else 'NOT clean'}",
@@ -253,7 +254,8 @@ def final():
     restarts = [e for e in events_between(started, time.time()) if e["kind"] in ("restart", "pod-new")]
     unplanned = [e for e in restarts if not in_chaos(e["at"], windows)]
     twice = c.get("in_twice", 0) + c.get("out_twice", 0)
-    ok = not lost_in and not lost_out and not twice and not unplanned
+    chaos_ok = all(w.get("result") == "ok" for w in windows)
+    ok = not lost_in and not lost_out and not twice and not unplanned and chaos_ok
     lines = [f"# Soak: {'PASSED' if ok else 'FAILED'}", "",
              f"{len(days)} day(s) from {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(started))}, context `{KCTX}`.", "",
              f"- Mail in: {c.get('in_sent', 0)} sent, {c.get('in_arrived', 0)} arrived, {len(lost_in)} lost, {c.get('in_twice', 0)} twice",
