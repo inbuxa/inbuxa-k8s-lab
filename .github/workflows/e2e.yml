@@ -1,46 +1,93 @@
 # SPDX-FileCopyrightText: 2026 Coffey Labs LLC
 # SPDX-License-Identifier: Apache-2.0
 #
-# The lab end to end on a fresh GitHub runner, amd64 and arm64 (S7, K-L1):
-# lab/tools.sh, then lab/e2e.sh with the chart from inbuxa-charts' main.
-# Runs on the GitHub replica only (vars.BUILD_ON), where the runners are;
-# Gitea's runners don't run it.
+# The lab end to end on fresh GitHub runners (K-L1, K-L8): lab/tools.sh,
+# then lab/e2e.sh, on each Kubernetes minor in lab/kubernetes.json (kind
+# node images pinned by digest) and each runner architecture.
 #
-# The full matrix (three Kubernetes minors, nightly, chart PRs) is K-L8.
+#   - nightly, on every push here, and by hand: the chart's main, three
+#     minors on amd64 and arm64
+#   - called by inbuxa-charts for each chart branch (workflow_call): that
+#     chart commit, the architectures it asks for
+#
+# Runs on the GitHub replicas only (vars.BUILD_ON, the caller's when
+# called), where the runners are; Gitea runs .gitea/workflows instead.
 name: e2e
 
 on:
+  schedule:
+    - cron: "17 9 * * *"   # 02:17 in Arizona
   workflow_dispatch:
   # Every branch: the lab's PRs are on Gitea, its branches reach GitHub by
   # the push mirror
   push:
+  workflow_call:
+    inputs:
+      chart_ref:
+        description: the inbuxa-charts commit or branch to test
+        type: string
+        required: true
+      lab_ref:
+        description: the inbuxa-k8s-lab commit or branch to test with
+        type: string
+        default: main
+      architectures:
+        description: JSON list of runner labels
+        type: string
+        default: '["ubuntu-24.04", "ubuntu-24.04-arm"]'
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-${{ github.repository }}-${{ github.ref }}-${{ inputs.chart_ref || 'main' }}
   cancel-in-progress: true
 
 jobs:
-  e2e:
+  matrix:
     if: ${{ vars.BUILD_ON == 'github' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      kubernetes: ${{ steps.m.outputs.kubernetes }}
+      runners: ${{ steps.m.outputs.runners }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-k8s-lab
+          ref: ${{ inputs.lab_ref || github.sha }}
+          persist-credentials: false
+          sparse-checkout: lab/kubernetes.json
+          sparse-checkout-cone-mode: false
+      - id: m
+        env:
+          RUNNERS: ${{ inputs.architectures || '["ubuntu-24.04", "ubuntu-24.04-arm"]' }}
+        run: |
+          echo "kubernetes=$(jq -c . lab/kubernetes.json)" >> "$GITHUB_OUTPUT"
+          echo "runners=$(jq -c . <<<"$RUNNERS")" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: matrix
+    name: e2e (${{ matrix.kubernetes.minor }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: ${{ fromJSON(needs.matrix.outputs.runners) }}
+        kubernetes: ${{ fromJSON(needs.matrix.outputs.kubernetes) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: inbuxa/inbuxa-k8s-lab
+          ref: ${{ inputs.lab_ref || github.sha }}
           path: inbuxa-k8s-lab
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: inbuxa/inbuxa-charts
-          # main, unless the repo variable CHART_REF names a chart branch
-          ref: ${{ vars.CHART_REF || 'main' }}
+          # the caller's chart commit; otherwise main, or the branch the repo
+          # variable CHART_REF names
+          ref: ${{ inputs.chart_ref || vars.CHART_REF || 'main' }}
           path: inbuxa-charts
           persist-credentials: false
       - name: Tools (pinned, checksummed)
@@ -52,6 +99,9 @@ jobs:
           nproc; free -h | head -2; df -h / | tail -1
           docker version --format 'docker {{.Server.Version}}'
       - name: Lab end to end
+        env:
+          KIND_NODE_IMAGE: ${{ matrix.kubernetes.image }}
+          E2E_LABEL: Kubernetes ${{ matrix.kubernetes.minor }}, ${{ matrix.runner }}
         run: inbuxa-k8s-lab/lab/e2e.sh
       - name: Memory at the end
         if: always()
