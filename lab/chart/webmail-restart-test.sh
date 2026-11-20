@@ -16,6 +16,12 @@
 #
 # WEBMAIL_IMAGE (a local image loaded into kind) installs that webmail
 # first, with values-frontends.yaml; otherwise the installed one is tested.
+#
+# RESTART names the Deployments restarted under the tabs, one after
+# another (default inbuxa-webmail), so the same check covers the server's
+# groups the webmail talks to:
+#
+#   RESTART="inbuxa-front inbuxa-core" lab/chart/webmail-restart-test.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -75,26 +81,34 @@ if [ "$("${K[@]}" -n lab-sink get pod webmail-tabs -o jsonpath='{.status.phase}'
   fail "the tabs stopped before the restart"
 fi
 
-image="$("${K[@]}" -n inbuxa get deploy inbuxa-webmail -o jsonpath='{.spec.template.spec.containers[0].image}')"
-echo "== restarting the webmail ($image) under them"
-"${K[@]}" -n inbuxa rollout restart deploy/inbuxa-webmail >/dev/null
-"${K[@]}" -n inbuxa rollout status deploy/inbuxa-webmail --timeout=5m >/dev/null
-sleep 20
+for d in ${RESTART:-inbuxa-webmail}; do
+  image="$("${K[@]}" -n inbuxa get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+  echo "== restarting $d ($image) under them"
+  "${K[@]}" -n inbuxa rollout restart "deploy/$d" >/dev/null
+  "${K[@]}" -n inbuxa rollout status "deploy/$d" --timeout=5m >/dev/null
+  # rollout status returns before the old pods have finished going
+  sleep 20
+done
 
 "${K[@]}" -n lab-sink exec webmail-tabs -- touch /tmp/stop
 "${K[@]}" -n lab-sink wait --for=jsonpath='{.status.phase}'=Succeeded pod/webmail-tabs --timeout=120s >/dev/null \
   || fail "the tabs didn't finish"
 out="$("${K[@]}" -n lab-sink logs webmail-tabs | tail -1)"
-python3 - "$out" <<'PY'
+python3 - "$out" "${RESTART:-inbuxa-webmail}" <<'PY'
 import json, sys
 r = json.loads(sys.argv[1])
+# Streams end only when the webmail itself restarts; the server's groups
+# and the console sit behind it, so there the streams just stay open
+webmail = "inbuxa-webmail" in sys.argv[2].split()
 print(f"   requests: {r['requests']} made, {r['failed']} failed")
 for i, t in enumerate(r["tabs"]):
     print(f"   tab {i}: {t['streams']} streams, {t['clean_ends']} ended cleanly, {t['cut_off']} cut off, "
           f"longest wait for an event {t['longest_gap_s']} s")
 for e in r["errors"]:
     print(f"   {e}")
-bad = r["failed"] > 0 or any(t["cut_off"] > 0 or t["streams"] < 2 for t in r["tabs"])
-print("== " + ("FAIL: a tab would have shown an error" if bad else "no request failed; every stream ended cleanly and came back"))
+bad = r["failed"] > 0 or any(t["cut_off"] > 0 or (webmail and t["streams"] < 2) for t in r["tabs"])
+print("== " + ("FAIL: a tab would have shown an error" if bad else
+      "no request failed; every stream ended cleanly and came back" if webmail else
+      "no request failed; no stream cut off"))
 sys.exit(1 if bad else 0)
 PY
