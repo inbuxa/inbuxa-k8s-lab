@@ -61,6 +61,8 @@ nightly, on the newest minor and both architectures.
 
 `lab/chart/webmail-restart-test.sh` restarts the webmail under open tabs
 and checks no request failed and every live-update stream came back.
+`RESTART=` names other Deployments to restart under them instead, such as
+the server's groups or the console.
 
 `lab/soak/soak.sh start` is the soak: a week (`SOAK_DAYS`) of steady load
 on an installed chart, with a different chaos scenario each day. Mail in

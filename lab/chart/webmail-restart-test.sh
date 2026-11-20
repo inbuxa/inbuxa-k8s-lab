@@ -94,16 +94,21 @@ done
 "${K[@]}" -n lab-sink wait --for=jsonpath='{.status.phase}'=Succeeded pod/webmail-tabs --timeout=120s >/dev/null \
   || fail "the tabs didn't finish"
 out="$("${K[@]}" -n lab-sink logs webmail-tabs | tail -1)"
-python3 - "$out" <<'PY'
+python3 - "$out" "${RESTART:-inbuxa-webmail}" <<'PY'
 import json, sys
 r = json.loads(sys.argv[1])
+# Streams end only when the webmail itself restarts; the server's groups
+# and the console sit behind it, so there the streams just stay open
+webmail = "inbuxa-webmail" in sys.argv[2].split()
 print(f"   requests: {r['requests']} made, {r['failed']} failed")
 for i, t in enumerate(r["tabs"]):
     print(f"   tab {i}: {t['streams']} streams, {t['clean_ends']} ended cleanly, {t['cut_off']} cut off, "
           f"longest wait for an event {t['longest_gap_s']} s")
 for e in r["errors"]:
     print(f"   {e}")
-bad = r["failed"] > 0 or any(t["cut_off"] > 0 or t["streams"] < 2 for t in r["tabs"])
-print("== " + ("FAIL: a tab would have shown an error" if bad else "no request failed; every stream ended cleanly and came back"))
+bad = r["failed"] > 0 or any(t["cut_off"] > 0 or (webmail and t["streams"] < 2) for t in r["tabs"])
+print("== " + ("FAIL: a tab would have shown an error" if bad else
+      "no request failed; every stream ended cleanly and came back" if webmail else
+      "no request failed; no stream cut off"))
 sys.exit(1 if bad else 0)
 PY
