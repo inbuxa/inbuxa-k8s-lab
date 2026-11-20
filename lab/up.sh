@@ -10,8 +10,18 @@ t0=$SECONDS
 step() { printf '\n== %s (%ss)\n' "$1" "$((SECONDS - t0))"; }
 rand() { head -c 24 /dev/urandom | base64 | tr -d '/+=' ; }
 
+step "Helm repositories"
+helm repo add cnpg https://cloudnative-pg.github.io/charts --force-update >/dev/null
+helm repo add nats https://nats-io.github.io/k8s/helm/charts/ --force-update >/dev/null
+helm repo add metallb https://metallb.github.io/metallb --force-update >/dev/null
+helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update >/dev/null
+helm repo update >/dev/null
+
 step "kind cluster"
-kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" || kind create cluster --name "$KIND_CLUSTER" --config "$here/kind.yaml" --wait 120s
+# KIND_NODE_IMAGE picks the Kubernetes version (CI's matrix); unset, kind's own
+kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" ||
+  kind create cluster --name "$KIND_CLUSTER" --config "$here/kind.yaml" --wait 120s \
+    ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"}
 kubectl config use-context "kind-$KIND_CLUSTER" >/dev/null
 for ns in data inbuxa; do kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null; done
 # inbuxa's pods run under Pod Security "restricted", enforced (K-C4), and
@@ -19,10 +29,25 @@ for ns in data inbuxa; do kubectl create namespace "$ns" --dry-run=client -o yam
 kubectl label --overwrite namespace inbuxa inbuxa.org/policy=enforce \
   pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted >/dev/null
 
+step "MetalLB"
+# LoadBalancer addresses from the top of kind's Docker network, which the
+# host reaches: computed, since that network's subnet differs by machine
+helm upgrade --install metallb metallb/metallb --version "$METALLB_CHART" -n metallb-system --create-namespace --wait >/dev/null
+subnet=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -v ':' | head -1)
+pool=$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_network(sys.argv[1]); print(f"{n.broadcast_address-55}-{n.broadcast_address-5}")' "$subnet")
+sed "s|172.19.255.200-172.19.255.250|$pool|" "$here/network/metallb-pool.yaml" | kubectl apply -f - >/dev/null
+echo "   LoadBalancer pool $pool ($subnet)"
+
 step "Kyverno"
 helm upgrade --install kyverno kyverno/kyverno --version "$KYVERNO_CHART" -n kyverno --create-namespace \
   --set cleanupController.enabled=false --set reportsController.enabled=false --wait >/dev/null
-kubectl apply -f "$here/policy/defaults.yaml" >/dev/null
+# Helm's --wait returns before the webhook answers on a new cluster
+for i in $(seq 1 30); do
+  kubectl apply -f "$here/policy/defaults.yaml" >/dev/null 2>"$here/.policy-apply.err" && break
+  [ "$i" = 30 ] && { cat "$here/.policy-apply.err" >&2; rm -f "$here/.policy-apply.err"; exit 1; }
+  sleep 3
+done
+rm -f "$here/.policy-apply.err"
 
 step "CloudNativePG operator"
 helm upgrade --install cnpg cnpg/cloudnative-pg --version "$CNPG_CHART" -n cnpg-system --create-namespace --wait >/dev/null
@@ -38,7 +63,14 @@ sed "s|GARAGE_IMAGE|$GARAGE_IMAGE|" "$here/data-layer/garage.yaml" | kubectl -n 
 kubectl -n data rollout status deploy/garage --timeout=180s >/dev/null
 g() { kubectl -n data exec deploy/garage -- /garage "$@"; }
 if ! g bucket info inbuxa-blobs >/dev/null 2>&1; then
-  node=$(g status 2>/dev/null | awk '/^[0-9a-f]{16}/{print $1; exit}')
+  # Ready to Kubernetes isn't ready to answer: wait for Garage to list itself
+  node=""
+  for _ in $(seq 1 30); do
+    node=$( (g status 2>/dev/null || true) | awk '/^[0-9a-f]{16}/{print $1; exit}')
+    [ -n "$node" ] && break
+    sleep 2
+  done
+  [ -n "$node" ] || { echo "!! Garage never listed its node" >&2; exit 1; }
   g layout assign -z lab -c 2G "$node" >/dev/null
   g layout apply --version 1 >/dev/null
   g bucket create inbuxa-blobs >/dev/null
