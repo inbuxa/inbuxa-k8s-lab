@@ -39,19 +39,28 @@ run_pod() {
   "${K[@]}" -n inbuxa wait --for=condition=Ready "pod/$name" --timeout=180s >/dev/null
 }
 
-# Port-forward 18080 to a pod's 8080 until stop_forward; waits for it to answer
+# Port-forward 18080 to a pod's 8080 until stop_forward; waits for it to
+# answer. The port-forward is started again if it exits, as it does when
+# the one before it hasn't let go of 18080 yet.
 FORWARD_PID=""
 forward() {
-  "${K[@]}" -n inbuxa port-forward "pod/$1" 18080:8080 >/dev/null 2>&1 &
-  FORWARD_PID=$!
   for _ in $(seq 1 60); do
+    if [ -z "$FORWARD_PID" ] || ! kill -0 "$FORWARD_PID" 2>/dev/null; then
+      "${K[@]}" -n inbuxa port-forward "pod/$1" 18080:8080 >/dev/null 2>&1 &
+      FORWARD_PID=$!
+    fi
     curl -fsS -o /dev/null http://127.0.0.1:18080/healthz/live 2>/dev/null && return 0
     sleep 1
   done
   echo "!! $1 never answered on 8080" >&2
   return 1
 }
-stop_forward() { [ -n "$FORWARD_PID" ] && kill "$FORWARD_PID" 2>/dev/null; FORWARD_PID=""; }
+stop_forward() {
+  [ -n "$FORWARD_PID" ] || return 0
+  kill "$FORWARD_PID" 2>/dev/null
+  wait "$FORWARD_PID" 2>/dev/null || true
+  FORWARD_PID=""
+}
 trap stop_forward EXIT
 
 # The one-off pods' config.json (the chart's own pods have theirs)

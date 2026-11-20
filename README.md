@@ -53,7 +53,7 @@ Argo CD or Flux instead of Helm, from a Helm repository in the cluster
 (`lab/gitops/gitops-test.sh`). Nothing is applied again unchanged and no
 Secret changes across refreshes. The controller puts a hand edit back. An
 upgrade with every image pinned by digest rolls everything without signing
-out webmail tabs left open across it. Then the 27.1 crossing from a 2026.x
+out webmail tabs left open across it or failing one of their requests. Then the 27.1 crossing from a 2026.x
 store, as changes to the controller's spec: refused, then acknowledged.
 Under Argo CD the chart's generated secrets are off and the Secrets are
 made first; Flux runs Helm, so the chart keeps its own. CI runs both
