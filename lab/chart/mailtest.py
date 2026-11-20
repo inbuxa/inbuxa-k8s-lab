@@ -21,7 +21,9 @@ tls.verify_mode = ssl.CERT_NONE
 msg = EmailMessage()
 # A sender domain with no DNS at all: one that publishes DMARC (example.net
 # does, p=reject) would send the message to Junk
-msg["From"] = "lab-sender@sender.test"
+# ...and one of its own each run: the server's default throttle allows 25
+# messages an hour from one sender domain to one recipient
+msg["From"] = f"lab-sender@{token[:12]}.sender.test"
 msg["To"] = account
 msg["Subject"] = f"chart smoke {token}"
 msg["Date"] = formatdate()

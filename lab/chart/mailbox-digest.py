@@ -51,10 +51,13 @@ if len(sys.argv) > 2 and sys.argv[2] == "send":
     m = imap()
     before = total(m)
     run = uuid.uuid4().hex[:8]
-    with smtplib.SMTP(lb, 25, timeout=30) as s:
-        for i in range(count):
+    # A session per message: servers cap the messages one session may send
+    for i in range(count):
+        with smtplib.SMTP(lb, 25, timeout=30) as s:
             msg = EmailMessage()
-            msg["From"] = "lab-sender@sender.test"
+            # Its own sender domain: the default throttle allows 25 an hour
+            # from one sender domain to one recipient
+            msg["From"] = f"lab-sender@m{i}.{run}.sender.test"
             msg["To"] = account
             msg["Subject"] = f"backup-test {run} {i}"
             msg["Date"] = formatdate()
@@ -63,6 +66,8 @@ if len(sys.argv) > 2 and sys.argv[2] == "send":
             msg.add_attachment((f"line {i}: " + uuid.uuid4().hex + "\n") * (60 + 17 * i),
                                filename=f"notes-{i}.txt")
             s.send_message(msg)
+        # Under the default 5 a second from one address
+        time.sleep(0.3)
     for _ in range(60):
         if total(m) >= before + count:
             break
