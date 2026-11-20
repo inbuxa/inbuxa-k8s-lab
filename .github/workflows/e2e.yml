@@ -49,6 +49,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       kubernetes: ${{ steps.m.outputs.kubernetes }}
+      newest: ${{ steps.m.outputs.newest }}
       runners: ${{ steps.m.outputs.runners }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,6 +64,7 @@ jobs:
           RUNNERS: ${{ inputs.architectures || '["ubuntu-24.04", "ubuntu-24.04-arm"]' }}
         run: |
           echo "kubernetes=$(jq -c . lab/kubernetes.json)" >> "$GITHUB_OUTPUT"
+          echo "newest=$(jq -c '.[-1]' lab/kubernetes.json)" >> "$GITHUB_OUTPUT"
           echo "runners=$(jq -c . <<<"$RUNNERS")" >> "$GITHUB_OUTPUT"
 
   e2e:
@@ -108,3 +110,40 @@ jobs:
         run: |
           free -h | head -2
           docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' || true
+
+  # The chaos tests (K-L4): the lab's own runs only (nightly, by hand, its
+  # pushes), not a chart branch's, which stays quick. Newest minor, both
+  # architectures.
+  chaos:
+    needs: matrix
+    if: ${{ inputs.chart_ref == '' }}
+    name: chaos (${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(needs.matrix.outputs.runners) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-k8s-lab
+          ref: ${{ github.sha }}
+          path: inbuxa-k8s-lab
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-charts
+          ref: ${{ vars.CHART_REF || 'main' }}
+          path: inbuxa-charts
+          persist-credentials: false
+      - name: Tools (pinned, checksummed)
+        run: |
+          inbuxa-k8s-lab/lab/tools.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Lab end to end, then chaos
+        env:
+          KIND_NODE_IMAGE: ${{ fromJSON(needs.matrix.outputs.newest).image }}
+          E2E_LABEL: chaos, Kubernetes ${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }}
+          CHAOS: "1"
+        run: inbuxa-k8s-lab/lab/e2e.sh
