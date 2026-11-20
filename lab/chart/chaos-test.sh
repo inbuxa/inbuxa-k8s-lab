@@ -137,6 +137,13 @@ for sc in $SCENARIOS; do
   # The retries too: why each send was refused says what the fault did
   sed 's/^/   /' "$WORK/$sc.log"
   TOOK[$sc]=$(( $(date +%s) - start ))
+  # A message missing: what the server's logs say about it, by its queue id
+  # (delivered late, deferred and why, or nothing at all)
+  for id in $(sed -n 's/^  queue id [0-9]*: \([0-9][0-9]*\)$/\1/p' "$WORK/$sc.log"); do
+    echo "   -- the server's logs on queue id $id"
+    "${K[@]}" -n inbuxa logs -l app.kubernetes.io/component=server --prefix --tail=-1 --since=30m 2>/dev/null \
+      | sed 's/\x1b\[[0-9;]*m//g' | grep -wF -- "$id" | tail -20 | cut -c1-400 | sed 's/^/      /' || true
+  done
   if [ "$fault" != 0 ]; then RESULT[$sc]="FAIL (the fault or the recovery)"
   elif [ "$flow" != 0 ]; then RESULT[$sc]="FAIL (mail lost or doubled)"
   else RESULT[$sc]="ok"; fi
