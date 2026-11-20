@@ -36,7 +36,12 @@ def send(n):
     msg["Date"] = formatdate()
     msg["Message-ID"] = make_msgid(domain=f"{run}.sender.test")
     msg.set_content(f"mailflow {run} message {n}\n")
-    with smtplib.SMTP(lb, 25, timeout=20) as s:
+    # As an MTA waits (RFC 5321 4.5.3.2): a dead address fails fast, but a
+    # slow reply is waited for, up to minutes. Giving up early on the reply
+    # to the end of DATA and sending again is how a sender makes duplicates.
+    with smtplib.SMTP(timeout=20) as s:
+        s.connect(lb, 25)
+        s.sock.settimeout(300)
         s.send_message(msg)
 
 
@@ -85,7 +90,8 @@ def count():
     return seen
 
 
-deadline = time.time() + 180
+# WAIT: how long to wait for what was accepted (an outage can delay delivery)
+deadline = time.time() + int(os.environ.get("WAIT", "180"))
 while True:
     try:
         seen = count()

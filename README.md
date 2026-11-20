@@ -41,6 +41,12 @@ CardDAV, the webmail signing in across both replicas and the console. It's
 what `e2e.sh` runs after the install, and what to run after changing the
 lab by hand.
 
+`lab/chart/chaos-test.sh` breaks things with mail flowing, a message a
+second, and checks that every message the server accepted arrived exactly
+once: a server pod killed, a node drained, the PostgreSQL primary failed
+over, NATS restarted, S3 frozen for 60 s. CI runs it nightly on the newest
+Kubernetes minor, both architectures (`CHAOS=1 lab/e2e.sh`).
+
 `lab/up.sh` is just the cluster: kind, Kyverno and the policies, MetalLB,
 and the data layer (CloudNativePG, NATS, Garage). It adds the Helm
 repositories it needs; the versions are pinned in `lab/versions.env`.

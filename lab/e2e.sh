@@ -10,7 +10,8 @@
 #   JMAP, SMTP out to an outside server, CalDAV, CardDAV, the webmail across
 #   both replicas and the console
 #
-# and how long each part took. CI runs this on a fresh runner; on the bench
+# and how long each part took; CHAOS=1 adds the chaos tests after it. CI
+# runs this on a fresh runner; on the bench
 # it builds the lab from scratch too, so take the lab down first
 # (lab/down.sh) unless you mean to reuse it.
 #
@@ -96,6 +97,14 @@ echo "== the client checks (chart/mailcheck.sh)"
 s=$SECONDS
 PORTS="$P" STATE="$STATE" "$here/chart/mailcheck.sh"
 lap "mail (SMTP in, submission, IMAP, JMAP, SMTP out), CalDAV, CardDAV, webmail, console" "$s"
+
+# CHAOS=1: then the faults, with mail flowing (chart/chaos-test.sh)
+if [ -n "${CHAOS:-}" ]; then
+  echo "== chaos (chart/chaos-test.sh)"
+  s=$SECONDS
+  PORTS="$P" STATE="$STATE" "$here/chart/chaos-test.sh"
+  lap "chaos: pod kill, drain, PostgreSQL failover, NATS restart, S3 outage" "$s"
+fi
 
 lap "**total**"
 echo "== passed in $(( SECONDS - t0 ))s"
