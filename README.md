@@ -34,6 +34,13 @@ and arm64 runners on each Kubernetes minor in `lab/kubernetes.json`, nightly
 and on every push (`.github/workflows/e2e.yml`), and each chart branch in
 inbuxa-charts calls the same workflow for its own commit.
 
+`lab/chart/mailcheck.sh` is every client check against an installed chart,
+in one command: SMTP in, submission, IMAP, JMAP, SMTP out to an outside
+server (an SMTP sink in the cluster, `lab/chart/mail-sink.yaml`), CalDAV,
+CardDAV, the webmail signing in across both replicas and the console. It's
+what `e2e.sh` runs after the install, and what to run after changing the
+lab by hand.
+
 `lab/up.sh` is just the cluster: kind, Kyverno and the policies, MetalLB,
 and the data layer (CloudNativePG, NATS, Garage). It adds the Helm
 repositories it needs; the versions are pinned in `lab/versions.env`.
