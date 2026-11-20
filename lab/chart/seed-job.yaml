@@ -12,7 +12,9 @@ spec:
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
-      labels: {app: inbuxa-seed}
+      # The chart's seed labels: the chart's deny-all and jobs NetworkPolicies
+      # cover it, as the lab's Kyverno policy requires
+      labels: {app: inbuxa-seed, app.kubernetes.io/name: inbuxa, app.kubernetes.io/instance: inbuxa, app.kubernetes.io/component: seed}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

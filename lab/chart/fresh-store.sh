@@ -14,6 +14,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 K=(kubectl --context kind-inbuxa-lab)
 IMAGE="${IMAGE:-inbuxa-lab/server:main}"
+# Never for an image loaded into kind; IfNotPresent for a published one
+PULL="${PULL:-Never}"
 PORTS="${PORTS:-pop3s=off}"
 DOMAIN="${DOMAIN:-lab.test}"
 STATE="${STATE:-$HOME/.cache/inbuxa-lab}"
@@ -21,11 +23,17 @@ mkdir -p "$STATE" && chmod 700 "$STATE"
 
 secret() { "${K[@]}" -n inbuxa get secret "$1" -o "jsonpath={.data.$2}" | base64 -d; }
 
-# A one-off server pod from ../spike, on this image and these listener ports
+# A one-off server pod from ../spike, on this image and these listener ports.
+# It carries the chart's server labels, so the chart's deny-all and server
+# NetworkPolicies cover it, as the lab's Kyverno policy requires.
+LABELS='app.kubernetes.io/name: inbuxa, app.kubernetes.io/instance: inbuxa, app.kubernetes.io/component: server'
+
 run_pod() {
   local file="$1" name="$2"
   "${K[@]}" -n inbuxa delete pod "$name" --ignore-not-found --wait >/dev/null
   sed -e "s|image: inbuxa-lab/server:rc27|image: $IMAGE|" \
+      -e "s|imagePullPolicy: Never|imagePullPolicy: $PULL|" \
+      -e "s|^  name: $name\$|  name: $name\n  labels: {$LABELS}|" -e '/^  labels: {app: inbuxa-setup}$/d' \
       -e "s|        - {name: INBUXA_HOSTNAME, value: $name}|        - {name: INBUXA_HOSTNAME, value: $name}\n        - {name: INBUXA_LISTENER_PORTS, value: \"$PORTS\"}|" \
       "../spike/$file" | "${K[@]}" apply -f - >/dev/null
   "${K[@]}" -n inbuxa wait --for=condition=Ready "pod/$name" --timeout=180s >/dev/null

@@ -11,6 +11,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 K=(kubectl --context kind-inbuxa-lab)
 IMAGE="${IMAGE:-inbuxa-lab/server:main}"
+# Never for an image loaded into kind; IfNotPresent for a published one
+PULL="${PULL:-Never}"
 STATE="${STATE:-$HOME/.cache/inbuxa-lab}"
 mkdir -p "$STATE" && chmod 700 "$STATE"
 
@@ -41,7 +43,7 @@ rm -f "$STATE/s3-access-key"
 
 echo "== the seed run"
 "${K[@]}" -n inbuxa delete job inbuxa-seed --ignore-not-found --wait >/dev/null
-sed "s|image: IMAGE|image: $IMAGE|" seed-job.yaml | "${K[@]}" apply -f - >/dev/null
+sed -e "s|image: IMAGE|image: $IMAGE|" -e "s|imagePullPolicy: Never|imagePullPolicy: $PULL|" seed-job.yaml | "${K[@]}" apply -f - >/dev/null
 if ! "${K[@]}" -n inbuxa wait --for=condition=Complete job/inbuxa-seed --timeout=300s >/dev/null 2>&1; then
   "${K[@]}" -n inbuxa logs job/inbuxa-seed --tail=40 >&2 || true
   echo "!! the seed run failed" >&2
