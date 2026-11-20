@@ -10,7 +10,13 @@
 #   JMAP, SMTP out to an outside server, CalDAV, CardDAV, the webmail across
 #   both replicas and the console
 #
-# and how long each part took; CHAOS=1 adds the chaos tests after it. CI
+# and how long each part took; CHAOS=1 adds the chaos tests after it.
+#
+# INSTALL_WITH=argocd or flux (K-L10) installs the chart through that
+# controller instead of Helm (lab/gitops/gitops.sh), then after the client
+# checks runs lab/gitops/gitops-test.sh (steady, self-heal, an upgrade under
+# open webmail tabs) and the 27.1 crossing from CROSSING_FROM (versions.env)
+# as changes to the controller's spec. CI
 # runs this on a fresh runner; on the bench
 # it builds the lab from scratch too, so take the lab down first
 # (lab/down.sh) unless you mean to reuse it.
@@ -79,18 +85,31 @@ rm -f "$STATE/s3-access-key"
   | "${K[@]}" apply -f - >/dev/null
 umask 022
 
-echo "== the chart: seeded, two replicas of everything"
-s=$SECONDS
-helm --kube-context "kind-$KIND_CLUSTER" -n inbuxa upgrade --install inbuxa "$CHART" \
-  -f "$here/chart/values-lab.yaml" -f "$here/chart/values-frontends.yaml" \
-  --set server.image.repository=ghcr.io/inbuxa/inbuxa-server --set server.image.tag="$SERVER" \
-  --set server.image.pullPolicy=IfNotPresent \
-  --set webmail.image.repository=ghcr.io/inbuxa/inbuxa-webmail --set webmail.image.tag="$WEBMAIL" \
-  --set webmail.image.pullPolicy=IfNotPresent \
-  --set console.image.repository=ghcr.io/inbuxa/inbuxa-admin --set console.image.tag="$CONSOLE" \
-  --set console.image.pullPolicy=IfNotPresent \
-  --wait --timeout 15m >/dev/null
-"${K[@]}" get pods --no-headers -o wide | awk '{print "   " $1, $3, $7}'
+if [ -n "${INSTALL_WITH:-}" ]; then
+  echo "== $INSTALL_WITH, and the chart as a Helm repository in the cluster"
+  s=$SECONDS
+  "$here/gitops/gitops.sh" controller "$INSTALL_WITH"
+  CHART_REPO="$CHART_REPO" "$here/gitops/gitops.sh" repo
+  lap "$INSTALL_WITH and the chart repository" "$s"
+  echo "== the chart through $INSTALL_WITH: seeded, two replicas of everything"
+  s=$SECONDS
+  SERVER="$SERVER" WEBMAIL="$WEBMAIL" CONSOLE="$CONSOLE" "$here/gitops/gitops.sh" apply "$INSTALL_WITH" >/dev/null
+  "$here/gitops/gitops.sh" wait "$INSTALL_WITH" "" 1200 | sed 's/^/   /'
+  "${K[@]}" get pods --no-headers -o wide | awk '{print "   " $1, $3, $7}'
+else
+  echo "== the chart: seeded, two replicas of everything"
+  s=$SECONDS
+  helm --kube-context "kind-$KIND_CLUSTER" -n inbuxa upgrade --install inbuxa "$CHART" \
+    -f "$here/chart/values-lab.yaml" -f "$here/chart/values-frontends.yaml" \
+    --set server.image.repository=ghcr.io/inbuxa/inbuxa-server --set server.image.tag="$SERVER" \
+    --set server.image.pullPolicy=IfNotPresent \
+    --set webmail.image.repository=ghcr.io/inbuxa/inbuxa-webmail --set webmail.image.tag="$WEBMAIL" \
+    --set webmail.image.pullPolicy=IfNotPresent \
+    --set console.image.repository=ghcr.io/inbuxa/inbuxa-admin --set console.image.tag="$CONSOLE" \
+    --set console.image.pullPolicy=IfNotPresent \
+    --wait --timeout 15m >/dev/null
+  "${K[@]}" get pods --no-headers -o wide | awk '{print "   " $1, $3, $7}'
+fi
 lap "chart install (seed, server, webmail, console)" "$s"
 
 echo "== the client checks (chart/mailcheck.sh)"
@@ -104,6 +123,21 @@ if [ -n "${CHAOS:-}" ]; then
   s=$SECONDS
   PORTS="$P" STATE="$STATE" "$here/chart/chaos-test.sh"
   lap "chaos: pod kill, drain, PostgreSQL failover, NATS restart, S3 outage" "$s"
+fi
+
+# INSTALL_WITH: then the controller's own tests, and the crossing
+if [ -n "${INSTALL_WITH:-}" ]; then
+  echo "== $INSTALL_WITH (gitops/gitops-test.sh)"
+  s=$SECONDS
+  SERVER="$SERVER" WEBMAIL="$WEBMAIL" CONSOLE="$CONSOLE" STATE="$STATE" \
+    "$here/gitops/gitops-test.sh" "$INSTALL_WITH" 3>"$STATE/gitops.env"
+  lap "$INSTALL_WITH: steady, self-heal, upgrade under open tabs" "$s"
+  echo "== the 27.1 crossing from $CROSSING_FROM through $INSTALL_WITH (chart/crossing-test.sh)"
+  s=$SECONDS
+  # shellcheck disable=SC2046
+  env $(cat "$STATE/gitops.env") GITOPS="$INSTALL_WITH" OLD="$CROSSING_FROM" TO="$SERVER" STATE="$STATE" \
+    CHART="$CHART" "$here/chart/crossing-test.sh"
+  lap "$INSTALL_WITH: the crossing from $CROSSING_FROM, refused, then acknowledged" "$s"
 fi
 
 lap "**total**"
