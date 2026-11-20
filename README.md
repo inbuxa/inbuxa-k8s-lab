@@ -30,7 +30,9 @@ seeded, then mail, the webmail and the console, timing each part. It wants
 inbuxa-charts checked out next to this repository (or `CHART_REPO=`), and
 kind, kubectl and Helm, which `lab/tools.sh` installs at pinned versions,
 each checked against its published checksum. CI runs it on GitHub's amd64
-and arm64 runners (`.github/workflows/e2e.yml`).
+and arm64 runners on each Kubernetes minor in `lab/kubernetes.json`, nightly
+and on every push (`.github/workflows/e2e.yml`), and each chart branch in
+inbuxa-charts calls the same workflow for its own commit.
 
 `lab/up.sh` is just the cluster: kind, Kyverno and the policies, MetalLB,
 and the data layer (CloudNativePG, NATS, Garage). It adds the Helm

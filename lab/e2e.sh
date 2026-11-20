@@ -16,7 +16,7 @@
 #
 #   lab/e2e.sh                      # chart in ../inbuxa-charts
 #   CHART_REPO=path lab/e2e.sh
-#   KIND_NODE_IMAGE=kindest/node:v1.35.4 lab/e2e.sh
+#   KIND_NODE_IMAGE=kindest/node:v1.35.8 lab/e2e.sh   # lab/kubernetes.json lists the three CI runs
 #
 # Prints a summary, also to $GITHUB_STEP_SUMMARY when it's set, and on a
 # failure what the pods and events were.
@@ -37,7 +37,7 @@ lap() { SUMMARY+=("| $1 | $(( SECONDS - ${2:-$t0} ))s |"); }
 report() {
   { echo "| Part | Took |"; echo "|---|---|"; printf '%s\n' "${SUMMARY[@]}"; } > "$STATE/e2e-summary.md"
   cat "$STATE/e2e-summary.md"
-  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { echo "### inbuxa lab, $(uname -m)"; cat "$STATE/e2e-summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { echo "### inbuxa lab, ${E2E_LABEL:-$(uname -m)}"; cat "$STATE/e2e-summary.md"; } >> "$GITHUB_STEP_SUMMARY"
   return 0
 }
 on_exit() {
