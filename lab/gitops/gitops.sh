@@ -61,6 +61,17 @@ controller() {
     "${K[@]}" -n argocd apply --server-side --force-conflicts -f "$work/install.yaml" >/dev/null
     "${K[@]}" -n argocd rollout status deploy/argocd-repo-server --timeout=300s >/dev/null
     "${K[@]}" -n argocd rollout status statefulset/argocd-application-controller --timeout=300s >/dev/null
+    # The core install has no API server, which is what makes the default
+    # project elsewhere
+    "${K[@]}" -n argocd apply -f - >/dev/null <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: {name: default, namespace: argocd}
+spec:
+  sourceRepos: ["*"]
+  destinations: [{server: "*", namespace: "*"}]
+  clusterResourceWhitelist: [{group: "*", kind: "*"}]
+EOF
     echo "   Argo CD $ARGOCD_VERSION (core)"
   else
     "${K[@]}" apply --server-side --force-conflicts -f "$work/install.yaml" >/dev/null
@@ -267,13 +278,15 @@ else:
     current = s.get("observedGeneration") == a["metadata"]["generation"]
     hist = s.get("history", [])
     want = spec["chart"]["spec"]["version"]
-    ok = current and ready.get("status") == "True" and bool(hist) and hist[0].get("chartVersion") == want
+    # Flux adds +N to the version of a chart it rebuilt with valuesFiles
+    got = (hist[0].get("chartVersion") or "").split("+")[0] if hist else None
+    ok = current and ready.get("status") == "True" and got == want
     failed = current and ready.get("status") == "False" and (
         cond.get("Stalled", {}).get("status") == "True" or ready.get("reason", "").endswith("Failed"))
     print(json.dumps({"ok": ok, "failed": failed, "op": f"gen:{s.get('observedGeneration')}",
                       "deployed": hist[0].get("lastDeployed", "") if hist else "",
                       "ready": ready.get("status"), "reason": ready.get("reason"),
-                      "version": hist[0].get("chartVersion") if hist else None,
+                      "version": got,
                       "actions": len(hist), "message": ready.get("message", "")[:300]}))
 ' "$tool"
 }
