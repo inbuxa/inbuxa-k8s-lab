@@ -47,6 +47,18 @@ once: a server pod killed, a node drained, the PostgreSQL primary failed
 over, NATS restarted, S3 frozen for 60 s. CI runs it nightly on the newest
 Kubernetes minor, both architectures (`CHAOS=1 lab/e2e.sh`).
 
+`INSTALL_WITH=argocd lab/e2e.sh` (or `flux`) installs the chart through
+Argo CD or Flux instead of Helm, from a Helm repository in the cluster
+(`lab/gitops/gitops.sh`), then checks what GitOps can get wrong
+(`lab/gitops/gitops-test.sh`). Nothing is applied again unchanged and no
+Secret changes across refreshes. The controller puts a hand edit back. An
+upgrade with every image pinned by digest rolls everything without signing
+out webmail tabs left open across it. Then the 27.1 crossing from a 2026.x
+store, as changes to the controller's spec: refused, then acknowledged.
+Under Argo CD the chart's generated secrets are off and the Secrets are
+made first; Flux runs Helm, so the chart keeps its own. CI runs both
+nightly, on the newest minor and both architectures.
+
 `lab/chart/webmail-restart-test.sh` restarts the webmail under open tabs
 and checks no request failed and every live-update stream came back.
 

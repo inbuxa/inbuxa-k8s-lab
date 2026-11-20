@@ -17,6 +17,12 @@
 #
 #   OLD=2026.11.18.3 TO=27.1-rc.34 lab/chart/crossing-test.sh
 #
+# GITOPS=argocd or flux (K-L10): the chart is the controller's
+# (lab/gitops), and steps 3 and 4 are changes to its spec, as commits would
+# be: the controller is suspended while OLD sets the store up, then given
+# TO without the acknowledgement (it must give up), then with it. Takes
+# CHART_VERSION, WEBMAIL and CONSOLE for the rest of the spec.
+#
 # WIPES the lab's inbuxa database, and leaves a store fresh-store.sh made.
 # seed-store.sh and a helm upgrade put the lab back as the other tests want it.
 set -euo pipefail
@@ -40,6 +46,20 @@ mark() { "${K[@]}" -n data exec inbuxa-pg-1 -c postgres -- psql -d inbuxa -At \
 lb() { "${K[@]}" -n inbuxa get svc inbuxa-mail -o jsonpath='{.status.loadBalancer.ingress[0].ip}'; }
 mailbox_digest() { ACCOUNT=alice@lab.test PASSWORD_FILE="$STATE/alice.password" python3 mailbox-digest.py "$(lb)" "$@"; }
 upgrade() {
+  if [ -n "${GITOPS:-}" ]; then
+    local since ack=""
+    [[ "$*" == *acknowledgeLayout=3* ]] && ack=3
+    since="$(../gitops/gitops.sh op "$GITOPS")"
+    SERVER="$to_d" SEED=false ACK="$ack" ../gitops/gitops.sh apply "$GITOPS" >/dev/null
+    if [ -n "$ack" ]; then
+      ../gitops/gitops.sh wait "$GITOPS" "$since" 1800 >/dev/null
+    else
+      # Given up on is what's wanted; anything else counts as went through
+      if ../gitops/gitops.sh refused "$GITOPS" "$since" 900 >/dev/null; then return 1; fi
+      return 0
+    fi
+    return
+  fi
   "${H[@]}" upgrade inbuxa "$CHART" -f values-lab.yaml --set server.seed.enabled=false \
     --set server.image.repository="$IMAGE" --set server.image.pullPolicy=IfNotPresent \
     --set server.image.digest="$to_d" --wait --timeout 20m "$@"
@@ -52,6 +72,11 @@ echo "$OLD = $old_d"
 echo "$TO = $to_d"
 
 echo "== 1. a store made by $OLD"
+if [ -n "${GITOPS:-}" ]; then
+  : "${WEBMAIL:?}" "${CONSOLE:?}"
+  ../gitops/gitops.sh suspend "$GITOPS"
+  echo "   $GITOPS suspended"
+fi
 IMAGE="$IMAGE@$old_d" PULL=IfNotPresent ./fresh-store.sh
 echo "   layout mark: $(mark)"
 # OLD serving mail, behind the chart's Service and NetworkPolicies. The

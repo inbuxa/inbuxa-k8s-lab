@@ -147,3 +147,55 @@ jobs:
           E2E_LABEL: chaos, Kubernetes ${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }}
           CHAOS: "1"
         run: inbuxa-k8s-lab/lab/e2e.sh
+
+  # GitOps (K-L10): the chart installed, upgraded and crossed from 2026.x by
+  # Argo CD and by Flux instead of Helm. The lab's own runs, newest minor,
+  # both architectures.
+  gitops:
+    needs: matrix
+    if: ${{ inputs.chart_ref == '' }}
+    name: gitops (${{ matrix.tool }}, ${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(needs.matrix.outputs.runners) }}
+        tool: [argocd, flux]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-k8s-lab
+          ref: ${{ github.sha }}
+          path: inbuxa-k8s-lab
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inbuxa/inbuxa-charts
+          ref: ${{ vars.CHART_REF || 'main' }}
+          path: inbuxa-charts
+          persist-credentials: false
+      - name: Tools (pinned, checksummed)
+        run: |
+          inbuxa-k8s-lab/lab/tools.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Lab end to end through ${{ matrix.tool }}, then its tests and the crossing
+        env:
+          KIND_NODE_IMAGE: ${{ fromJSON(needs.matrix.outputs.newest).image }}
+          E2E_LABEL: ${{ matrix.tool }}, Kubernetes ${{ fromJSON(needs.matrix.outputs.newest).minor }}, ${{ matrix.runner }}
+          INSTALL_WITH: ${{ matrix.tool }}
+        run: inbuxa-k8s-lab/lab/e2e.sh
+      - name: What the controller said
+        if: failure()
+        env:
+          TOOL: ${{ matrix.tool }}
+        run: |
+          if [ "$TOOL" = argocd ]; then
+            kubectl -n argocd get application inbuxa -o yaml | sed -n '/^status:/,$p' | head -150
+            kubectl -n argocd logs statefulset/argocd-application-controller --tail=80 || true
+          else
+            kubectl -n flux-system get helmrelease inbuxa -o yaml | sed -n '/^status:/,$p' | head -150
+            kubectl -n flux-system logs deploy/helm-controller --tail=80 || true
+          fi
+          kubectl -n inbuxa get jobs,pods -o wide || true
+          kubectl -n inbuxa logs job/inbuxa-upgrade --tail=40 || true
