@@ -10,7 +10,7 @@ arrived exactly once.
   ACCOUNT=user@domain PASSWORD_FILE=... STOP_FILE=... mailflow.py LB
 
 Prints a summary line and exits 1 if anything accepted was lost or came
-twice. The lab's certificate is self-signed, so TLS isn't verified.
+twice; for a message missing, the queue id the server gave it. The lab's certificate is self-signed, so TLS isn't verified.
 """
 import imaplib, os, re, smtplib, ssl, sys, time, uuid
 from email.message import EmailMessage
@@ -43,9 +43,22 @@ def send(n):
     try:
         s.connect(lb, 25)
         s.sock.settimeout(300)
-        s.send_message(msg)
+        s.ehlo_or_helo_if_needed()
+        code, resp = s.mail(msg["From"])
+        if code != 250:
+            raise smtplib.SMTPSenderRefused(code, resp, msg["From"])
+        code, resp = s.rcpt(account)
+        if code not in (250, 251):
+            raise smtplib.SMTPRecipientsRefused({account: (code, resp)})
+        code, resp = s.data(msg.as_bytes())
+        if code != 250:
+            raise smtplib.SMTPDataError(code, resp)
     finally:
         quit_quietly(s)
+    # "250 2.0.0 Message queued with id 1a2b...": the server's logs name the
+    # same message by that id, in decimal
+    m = re.search(rb"queued with id ([0-9a-f]+)", resp)
+    return int(m.group(1), 16) if m else None
 
 
 def quit_quietly(s):
@@ -62,10 +75,11 @@ def quit_quietly(s):
 
 
 accepted, retries, started = 0, 0, time.time()
+queue_ids = {}
 while not os.path.exists(stop):
     n = accepted + 1
     try:
-        send(n)
+        queue_ids[n] = send(n)
         accepted = n
     except (OSError, smtplib.SMTPException) as e:
         # Refused, reset or a 4xx: a real MTA tries again later
@@ -124,6 +138,9 @@ print(f"mailflow {run}: {accepted} accepted over {sent_for:.0f}s, {retries} retr
       f"{accepted - len(missing)} arrived, {len(missing)} missing, {len(twice)} twice")
 if missing:
     print(f"  missing: {missing[:20]}")
+    # One line per message for chaos-test.sh to look up in the server's logs
+    for n in missing[:20]:
+        print(f"  queue id {n}: {queue_ids.get(n)}")
 if twice:
     print(f"  twice: {twice[:20]}")
 sys.exit(1 if missing or twice or accepted == 0 else 0)
