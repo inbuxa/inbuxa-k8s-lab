@@ -10,6 +10,10 @@
 #   JMAP, SMTP out to an outside server, CalDAV, CardDAV, the webmail across
 #   both replicas and the console
 #
+#   the singleton roles, chart/singleton-test.sh: one of the two core pods
+#   at a time does the scheduler's and the alerts' work, and the other takes
+#   it over when that one is killed
+#
 # and how long each part took; CHAOS=1 adds the chaos tests after it.
 #
 # INSTALL_WITH=argocd or flux (K-L10) installs the chart through that
@@ -116,6 +120,11 @@ echo "== the client checks (chart/mailcheck.sh)"
 s=$SECONDS
 PORTS="$P" STATE="$STATE" "$here/chart/mailcheck.sh"
 lap "mail (SMTP in, submission, IMAP, JMAP, SMTP out), CalDAV, CardDAV, webmail, console" "$s"
+
+echo "== the singleton roles on two core pods (chart/singleton-test.sh)"
+s=$SECONDS
+KIND_CLUSTER="$KIND_CLUSTER" "$here/chart/singleton-test.sh" | sed 's/^/   /'
+lap "singleton roles: one holder each, taken over when the holder is killed" "$s"
 
 # CHAOS=1: then the faults, with mail flowing (chart/chaos-test.sh)
 if [ -n "${CHAOS:-}" ]; then
