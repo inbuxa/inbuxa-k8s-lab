@@ -24,6 +24,36 @@ kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" ||
     ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"}
 kubectl config use-context "kind-$KIND_CLUSTER" >/dev/null
 for ns in data inbuxa; do kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null; done
+
+step "Docker Hub images: pulled once, loaded into the nodes"
+# Docker Hub limits anonymous pulls per address, and four nodes each pulling
+# NATS and Garage could run out on a shared CI address (NATS stuck in
+# ImagePullBackOff). Pulled here once each, retried, then loaded into every
+# node; one that still won't pull is left to the nodes, as before.
+hub_images() {
+  helm template nats nats/nats --version "$NATS_CHART" -n data -f "$here/data-layer/nats-values.yaml" \
+    | awk '$1 == "image:" {print $2}' | tr -d '"'
+  echo "$GARAGE_IMAGE"
+}
+case "$(docker info -f '{{.Architecture}}')" in
+  aarch64|arm64) platform=linux/arm64 ;;
+  *) platform=linux/amd64 ;;
+esac
+archive="$(mktemp)"
+for image in $(hub_images | sed -E 's|^docker\.io/||' | grep -vE '^[^/]+\.[^/]+/' | sort -u); do
+  pulled=""
+  for wait in 0 20 60 120; do
+    sleep "$wait"
+    docker pull -q --platform "$platform" "$image" >/dev/null 2>&1 && { pulled=1; break; }
+  done
+  if [ -n "$pulled" ] && docker save --platform "$platform" -o "$archive" "$image" \
+    && kind load image-archive "$archive" --name "$KIND_CLUSTER" >/dev/null 2>&1; then
+    echo "   $image"
+  else
+    echo "   $image: not loaded, the nodes pull it themselves" >&2
+  fi
+done
+rm -f "$archive"
 # inbuxa's pods run under Pod Security "restricted", enforced (K-C4), and
 # the lab's own policies (policy/defaults.yaml, K-L3)
 kubectl label --overwrite namespace inbuxa inbuxa.org/policy=enforce \
