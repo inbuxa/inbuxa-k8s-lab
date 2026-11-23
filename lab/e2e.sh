@@ -57,7 +57,7 @@ on_exit() {
     echo "== failed: pods and events"
     kubectl --context "kind-$KIND_CLUSTER" get pods -A -o wide 2>/dev/null || true
     "${K[@]}" get events --sort-by=.lastTimestamp 2>/dev/null | tail -40 || true
-    "${K[@]}" logs -l app.kubernetes.io/component=server --tail=30 --prefix 2>/dev/null | grep -v '^\s*$' | tail -60 || true
+    "${K[@]}" logs -l app.kubernetes.io/component=server --tail=30 --prefix --max-log-requests=20 2>/dev/null | grep -v '^\s*$' | tail -60 || true
   fi
   report
   exit "$rc"

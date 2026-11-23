@@ -22,6 +22,15 @@ ROLES=(taskScheduler metricsCalculate)
 TAKEOVER_LIMIT=360
 fails=0
 
+# What the core pods say about the leases and the coordinator, on a failure
+explain() {
+  for p in $(core_pods); do
+    echo "     -- $p: $("${K[@]}" logs "$p" --tail=-1 2>/dev/null | wc -l) log lines; on leases and the coordinator:"
+    "${K[@]}" logs "$p" --tail=-1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \
+      | grep -iE 'singleton|coordinator|cluster\.' | tail -8 | cut -c1-300 | sed 's/^/        /' || true
+  done
+}
+
 core_pods() { "${K[@]}" get pods -l "$SEL" --field-selector=status.phase=Running -o name | sed 's|^pod/||'; }
 
 # The roles a pod holds now: for each role, its last taken/lost line decides
@@ -68,6 +77,7 @@ if out=$(one_holder_each 150); then
   sed 's/^/ok   /' <<<"$out"
 else
   echo "FAIL not exactly one holder for each role:"; sed 's/^/     /' <<<"${out:-(none)}"
+  explain
   exit 1
 fi
 
