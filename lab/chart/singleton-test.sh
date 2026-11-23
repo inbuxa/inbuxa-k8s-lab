@@ -6,9 +6,11 @@
 # taskScheduler and metricsCalculate roles, and one at a time holds each
 # role's lease in the store and does its work. Checks that:
 #   - each role has exactly one holder among the core pods;
-#   - when the holder dies without giving the lease up (killed, no grace
-#     period), another core pod takes both roles over within two lease
-#     periods (6 minutes; about 4 is expected);
+#   - a crash: the holder's server process killed (SIGKILL, from its kind
+#     node), so it gives nothing up, and its roles taken over within two
+#     lease periods (6 minutes; about 4 is expected);
+#   - a clean stop: the holder deleted as a rollout or a drain would, its
+#     leases given up and taken at the next round (2 minutes at most);
 #   - each role again has exactly one holder.
 # Reads the pods' logs for cluster.singleton-lease-taken and -lost. Leaves
 # two ready core pods behind.
@@ -81,35 +83,82 @@ else
   exit 1
 fi
 
-victim=$(awk '$1 == "taskScheduler" {print $2}' <<<"$out")
-victim_roles=$(awk -v p="$victim" '$2 == p {print $1}' <<<"$out" | tr '\n' ' ')
-echo "== killing $victim (holds: $victim_roles) with no grace period"
-"${K[@]}" delete pod "$victim" --grace-period=0 --force >/dev/null 2>&1
-t=$SECONDS
+# Waits until every role in $2 has a holder that isn't pod $1 (or any
+# pod, with $1 empty); prints "role pod" lines, or fails after $3 seconds
+taken_over() {
+  local gone=$1 roles=$2 limit=$3 start=$SECONDS out ok
+  while (( SECONDS - start < limit )); do
+    out=$(holders | { if [ -n "$gone" ]; then grep -v " $gone\$"; else cat; fi; } || true)
+    ok=1
+    for r in $roles; do [ "$(grep -c "^$r " <<<"$out" || true)" = 1 ] || ok=""; done
+    if [ -n "$ok" ]; then echo "$out"; return 0; fi
+    sleep 5
+  done
+  echo "$out"
+  return 1
+}
 
-echo "== another core pod takes its roles over"
-taken=""
-while (( SECONDS - t < TAKEOVER_LIMIT )); do
-  out=$(holders | grep -v " $victim\$" || true)
-  taken=1
-  for r in $victim_roles; do grep -q "^$r " <<<"$out" || taken=""; done
-  [ -n "$taken" ] && break
-  sleep 5
-done
-if [ -n "$taken" ]; then
-  echo "ok   taken over in $(( SECONDS - t ))s (limit ${TAKEOVER_LIMIT}s):"
+holder_of() { awk -v r="$1" '$1 == r {print $2}' <<<"$2"; }
+roles_of() { awk -v p="$1" '$2 == p {print $1}' <<<"$2" | tr '\n' ' '; }
+
+# 1. A crash: the holder's server process killed (SIGKILL, from its kind
+# node), so it gives nothing up. Its container restarts in the same pod,
+# with a new lease token; whichever core pod is first after the lease runs
+# out takes the roles. The old process's log goes with it, so until then
+# no pod's current log says it holds them.
+victim=$(holder_of taskScheduler "$out")
+victim_roles=$(roles_of "$victim" "$out")
+node=$("${K[@]}" get pod "$victim" -o jsonpath='{.spec.nodeName}')
+sandbox=$(docker exec "$node" crictl pods --name "$victim" -q | head -1)
+cid=$(docker exec "$node" crictl ps --pod "$sandbox" --name server -q | head -1)
+pid=$(docker exec "$node" crictl inspect --output go-template --template '{{.info.pid}}' "$cid")
+restarts() { "${K[@]}" get pod "$victim" -o jsonpath='{.status.containerStatuses[?(@.name=="server")].restartCount}'; }
+before=$(restarts)
+echo "== a crash: the server in $victim (holds: $victim_roles) killed, pid $pid on $node"
+docker exec "$node" sh -c "kill -KILL $pid"
+t=$SECONDS
+# Its log is the new container's only once that has started
+for _ in $(seq 1 60); do [ "$(restarts)" -gt "$before" ] && break; sleep 1; done
+if out=$(taken_over "" "$victim_roles" "$TAKEOVER_LIMIT"); then
+  echo "ok   taken over in $(( SECONDS - t ))s, once the lease ran out (limit ${TAKEOVER_LIMIT}s):"
   sed 's/^/       /' <<<"$out"
 else
   echo "FAIL not taken over in ${TAKEOVER_LIMIT}s; holders now:"; sed 's/^/     /' <<<"${out:-(none)}"
+  explain
+  fails=$((fails + 1))
+fi
+"${K[@]}" rollout status deploy/inbuxa-core --timeout=300s >/dev/null
+
+# 2. A clean stop, as in a rollout or a drain: the holder gives its leases
+# up as it stops, and another core pod takes them at its next round, a
+# minute at most
+out=$(holders)
+victim=$(holder_of taskScheduler "$out")
+victim_roles=$(roles_of "$victim" "$out")
+if [ -n "$victim" ]; then
+  echo "== a clean stop: $victim (holds: $victim_roles) deleted"
+  "${K[@]}" delete pod "$victim" --wait=false >/dev/null
+  t=$SECONDS
+  if out=$(taken_over "$victim" "$victim_roles" 120); then
+    echo "ok   handed over in $(( SECONDS - t ))s (limit 120s):"
+    sed 's/^/       /' <<<"$out"
+  else
+    echo "FAIL not handed over in 120s; holders now:"; sed 's/^/     /' <<<"${out:-(none)}"
+    explain
+    fails=$((fails + 1))
+  fi
+else
+  echo "FAIL no taskScheduler holder before the clean stop"
   fails=$((fails + 1))
 fi
 
-echo "== the replacement pod is up, and still one holder for each role"
+echo "== both core pods up, and one holder for each role"
 "${K[@]}" rollout status deploy/inbuxa-core --timeout=300s >/dev/null
 if out=$(one_holder_each 150); then
   sed 's/^/ok   /' <<<"$out"
 else
   echo "FAIL not exactly one holder for each role:"; sed 's/^/     /' <<<"${out:-(none)}"
+  explain
   fails=$((fails + 1))
 fi
 
