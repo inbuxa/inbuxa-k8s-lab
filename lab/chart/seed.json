@@ -24,12 +24,6 @@
       "authSecret": {"@type": "File", "filePath": "/etc/inbuxa/secrets/nats-password"}
     }}}, "coordinator"],
 
-    ["x:Tracer/set", {"create": {"stdout": {
-      "@type": "Stdout", "enable": true, "level": "info",
-      "eventsPolicy": "exclude", "events": {},
-      "ansi": false, "multiline": false, "buffered": true, "lossy": false
-    }}}, "tracer"],
-
     ["x:ClusterRole/set", {"create": {
       "peer": {
         "name": "peer",
