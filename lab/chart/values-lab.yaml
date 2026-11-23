@@ -22,7 +22,7 @@ server:
   groups:
     front: {enabled: true, replicas: 2, role: peer}
     mta: {enabled: true, replicas: 2, role: peer-mta}
-    core: {enabled: true, replicas: 1, role: ""}
+    core: {enabled: true, replicas: 2, role: ""}
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "1", memory: 1Gi}

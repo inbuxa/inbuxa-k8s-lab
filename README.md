@@ -41,6 +41,14 @@ CardDAV, the webmail signing in across both replicas and the console. It's
 what `e2e.sh` runs after the install, and what to run after changing the
 lab by hand.
 
+`lab/chart/singleton-test.sh` checks the two core pods take turns with the
+scheduler's and the alerts' work (server #437): each role has exactly one
+holder; when the holder's server process is killed (SIGKILL, from its kind
+node) its roles are taken over once the lease runs out, within two lease
+periods; and when the holder is deleted, as a rollout or a drain would,
+its leases are handed over at the next round. `e2e.sh` runs it after the
+client checks.
+
 `lab/chart/chaos-test.sh` breaks things with mail flowing, a message a
 second, and checks that every message the server accepted arrived exactly
 once: a server pod killed, a node drained, the PostgreSQL primary failed
