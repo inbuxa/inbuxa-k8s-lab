@@ -17,6 +17,7 @@
 #
 #   lab/chart/singleton-test.sh
 set -euo pipefail
+trap 'echo "!! singleton-test.sh stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 K=(kubectl --context "kind-${KIND_CLUSTER:-inbuxa-lab}" -n inbuxa)
 SEL=app.kubernetes.io/component=server,inbuxa.org/group=core
@@ -37,8 +38,9 @@ core_pods() { "${K[@]}" get pods -l "$SEL" --field-selector=status.phase=Running
 
 # The roles a pod holds now: for each role, its last taken/lost line decides
 holds() {
+  # A pod with no lease lines yet holds nothing: never a failure
   "${K[@]}" logs "$1" --tail=-1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \
-    | grep -E '\(cluster\.singleton-lease-(taken|lost)\)' \
+    | { grep -E '\(cluster\.singleton-lease-(taken|lost)\)' || true; } \
     | awk -v roles="${ROLES[*]}" '
         BEGIN { n = split(roles, r, " ") }
         { for (i = 1; i <= n; i++) if (index($0, "\"" r[i] "\"")) last[r[i]] = (index($0, "lease-taken") ? 1 : 0) }
@@ -46,7 +48,7 @@ holds() {
 }
 
 # "role pod" for every role held, across the core pods
-holders() { for p in $(core_pods); do holds "$p" | sed "s|\$| $p|"; done; }
+holders() { for p in $(core_pods); do holds "$p" | sed "s|\$| $p|"; done; return 0; }
 
 # Waits until each role has exactly one holder; prints "role pod" lines
 one_holder_each() {
